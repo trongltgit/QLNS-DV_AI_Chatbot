@@ -1,0 +1,8 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 20px;
+}
+h1 { color: darkblue; }
+section { margin-bottom: 20px; }
+textarea { width: 300px; height: 100px; display: block; margin-bottom: 10px; }
+button { padding: 5px 10px; }

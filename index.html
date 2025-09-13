@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Quản lý Đảng viên & Chatbot AI</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>📘 Hệ thống Quản lý Đảng viên & Chatbot AI</h1>
+
+  <section>
+    <h2>📂 Upload Tài liệu</h2>
+    <form id="uploadForm">
+      <input type="file" name="file" required />
+      <button type="submit">Upload</button>
+    </form>
+    <p id="uploadStatus"></p>
+  </section>
+
+  <section>
+    <h2>📜 Tài liệu đã upload</h2>
+    <select id="docSelect"></select>
+  </section>
+
+  <section>
+    <h2>💬 Chat với tài liệu</h2>
+    <textarea id="question" placeholder="Nhập câu hỏi..."></textarea>
+    <button id="askBtn">Hỏi</button>
+    <div id="answer"></div>
+  </section>
+
+  <script>
+    const uploadForm = document.getElementById("uploadForm");
+    const uploadStatus = document.getElementById("uploadStatus");
+    const docSelect = document.getElementById("docSelect");
+    const askBtn = document.getElementById("askBtn");
+    const answerDiv = document.getElementById("answer");
+
+    async function loadDocs() {
+      const res = await fetch("/api/docs");
+      const data = await res.json();
+      docSelect.innerHTML = data.docs.map(d => `<option>${d}</option>`).join("");
+    }
+
+    uploadForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const formData = new FormData(uploadForm);
+      uploadStatus.textContent = "Đang upload...";
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      uploadStatus.textContent = `✅ ${data.message} | Tóm tắt: ${data.summary}`;
+      loadDocs();
+    });
+
+    askBtn.addEventListener("click", async () => {
+      const question = document.getElementById("question").value;
+      const filename = docSelect.value;
+      const formData = new FormData();
+      formData.append("question", question);
+      formData.append("filename", filename);
+      answerDiv.textContent = "⏳ Đang trả lời...";
+      const res = await fetch("/api/chat", { method: "POST", body: formData });
+      const data = await res.json();
+      answerDiv.textContent = data.answer;
+    });
+
+    loadDocs();
+  </script>
+</body>
+</html>
