@@ -1,100 +1,46 @@
 import os
-from fastapi import FastAPI, UploadFile, Form, Request
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi import FastAPI, UploadFile, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-from PyPDF2 import PdfReader
-from openai import OpenAI
+from utils.pdf_reader import extract_chunks
+from utils.vector_store import build_faiss_index, search_faiss
+from utils.ai_utils import ask_ai
+from pydantic import BaseModel
 
-# Cấu hình OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+UPLOAD_DIR = "uploads"
+DB_DIR = "db"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(DB_DIR, exist_ok=True)
 
-# Khởi tạo app
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# Bộ nhớ tạm
-docs_db = {}  # filename -> {"content":..., "summary":...}
-
-
-def summarize_text(text: str) -> str:
-    """Tóm tắt văn bản sử dụng OpenAI"""
-    if not text.strip():
-        return "Không có nội dung để tóm tắt."
-    prompt = f"Tóm tắt ngắn gọn tài liệu sau:\n\n{text[:4000]}"
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "Bạn là một trợ lý tóm tắt tài liệu."},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=300,
-    )
-    return response.choices[0].message.content.strip()
-
+class Question(BaseModel):
+    question: str
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-
-@app.get("/api/docs")
-async def list_docs():
-    return {"docs": list(docs_db.keys())}
-
-
 @app.post("/api/upload")
-async def upload_file(file: UploadFile):
+async def upload_pdf(file: UploadFile):
+    if not file.filename.endswith(".pdf"):
+        return JSONResponse({"error": "Chỉ hỗ trợ PDF"}, status_code=400)
+
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as f:
         f.write(await file.read())
 
-    # Đọc PDF
-    content = ""
-    if file.filename.lower().endswith(".pdf"):
-        reader = PdfReader(file_path)
-        for page in reader.pages:
-            content += page.extract_text() or ""
-    else:
-        content = "(Chỉ hỗ trợ PDF trong demo)"
+    chunks = extract_chunks(file_path)
+    build_faiss_index(chunks, file.filename)
 
-    summary = summarize_text(content)
-    docs_db[file.filename] = {"content": content, "summary": summary}
-    return {"message": "Upload thành công", "filename": file.filename, "summary": summary}
+    return {"message": f"Đã xử lý {file.filename} với {len(chunks)} đoạn."}
 
-
-@app.post("/api/chat")
-async def chat_with_doc(
-    question: str = Form(...),
-    filename: str = Form(...)
-):
-    data = docs_db.get(filename)
-    if not data:
-        return JSONResponse({"answer": "Không tìm thấy tài liệu."}, status_code=404)
-
-    context = f"Tóm tắt: {data['summary']}\n\nNội dung: {data['content'][:4000]}"
-    prompt = f"Dựa trên tài liệu sau, trả lời câu hỏi của người dùng.\n\n{context}\n\nCâu hỏi: {question}"
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "Bạn là trợ lý ảo thông minh, trả lời dựa trên tài liệu."},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=400,
-    )
-    answer = response.choices[0].message.content.strip()
-    return {"answer": answer}
+@app.post("/api/ask")
+async def ask_question(q: Question):
+    question = q.question
+    docs = search_faiss(question)
+    answer = ask_ai(question, docs)
+    return {"answer": answer, "sources": docs}
