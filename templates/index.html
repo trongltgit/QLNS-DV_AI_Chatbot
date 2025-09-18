@@ -2,69 +2,141 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <title>Quản lý Đảng viên & Chatbot AI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chatbot Tài liệu PDF</title>
   <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      margin: 0;
+      padding: 0;
+      color: #333;
+    }
+    header {
+      background: #4CAF50;
+      color: white;
+      text-align: center;
+      padding: 1rem 0;
+      font-size: 1.5rem;
+    }
+    .container {
+      max-width: 800px;
+      margin: 2rem auto;
+      background: white;
+      padding: 2rem;
+      border-radius: 10px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    h2 {
+      margin-bottom: 1rem;
+      font-size: 1.2rem;
+    }
+    input[type=file] {
+      margin-bottom: 1rem;
+    }
+    button {
+      background: #4CAF50;
+      color: white;
+      padding: 0.6rem 1rem;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    .chat-box {
+      margin-top: 2rem;
+    }
+    .chat-log {
+      border: 1px solid #ddd;
+      padding: 1rem;
+      height: 300px;
+      overflow-y: auto;
+      margin-bottom: 1rem;
+      background: #fafafa;
+      border-radius: 5px;
+    }
+    .msg {
+      margin-bottom: 1rem;
+    }
+    .user {
+      color: #1a73e8;
+      font-weight: bold;
+    }
+    .bot {
+      color: #333;
+    }
+    .source {
+      font-size: 0.85rem;
+      color: #777;
+      margin-top: 0.3rem;
+      border-left: 3px solid #ddd;
+      padding-left: 0.5rem;
+    }
+  </style>
 </head>
 <body>
-  <h1>📘 Hệ thống Quản lý Đảng viên & Chatbot AI</h1>
+<header>Chatbot Phân Tích PDF</header>
+<div class="container">
+  <h2>Tải PDF</h2>
+  <input type="file" id="pdfFile">
+  <button onclick="uploadFile()">Upload</button>
+  <p id="uploadStatus"></p>
 
-  <section>
-    <h2>📂 Upload Tài liệu</h2>
-    <form id="uploadForm">
-      <input type="file" name="file" required />
-      <button type="submit">Upload</button>
-    </form>
-    <p id="uploadStatus"></p>
-  </section>
+  <div class="chat-box">
+    <h2>Chat với tài liệu</h2>
+    <div class="chat-log" id="chatLog"></div>
+    <input type="text" id="question" placeholder="Nhập câu hỏi..." style="width:70%">
+    <button onclick="askQuestion()">Gửi</button>
+  </div>
+</div>
 
-  <section>
-    <h2>📜 Tài liệu đã upload</h2>
-    <select id="docSelect"></select>
-  </section>
+<script>
+async function uploadFile() {
+  const fileInput = document.getElementById('pdfFile');
+  if (!fileInput.files.length) {
+    alert("Vui lòng chọn file PDF!");
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
 
-  <section>
-    <h2>💬 Chat với tài liệu</h2>
-    <textarea id="question" placeholder="Nhập câu hỏi..."></textarea>
-    <button id="askBtn">Hỏi</button>
-    <div id="answer"></div>
-  </section>
+  const res = await fetch("/api/upload", {
+    method: "POST",
+    body: formData
+  });
+  const data = await res.json();
+  document.getElementById('uploadStatus').innerText = data.message || data.error;
+}
 
-  <script>
-    const uploadForm = document.getElementById("uploadForm");
-    const uploadStatus = document.getElementById("uploadStatus");
-    const docSelect = document.getElementById("docSelect");
-    const askBtn = document.getElementById("askBtn");
-    const answerDiv = document.getElementById("answer");
+async function askQuestion() {
+  const question = document.getElementById('question').value.trim();
+  if (!question) return;
 
-    async function loadDocs() {
-      const res = await fetch("/api/docs");
-      const data = await res.json();
-      docSelect.innerHTML = data.docs.map(d => `<option>${d}</option>`).join("");
-    }
+  const chatLog = document.getElementById('chatLog');
+  chatLog.innerHTML += `<div class="msg"><span class="user">Bạn:</span> ${question}</div>`;
 
-    uploadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const formData = new FormData(uploadForm);
-      uploadStatus.textContent = "Đang upload...";
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      uploadStatus.textContent = `✅ ${data.message} | Tóm tắt: ${data.summary}`;
-      loadDocs();
+  const res = await fetch("/api/ask", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({question})
+  });
+  const data = await res.json();
+  
+  let answerHTML = `<div class="msg"><span class="bot">Chatbot:</span> ${data.answer}</div>`;
+  if (data.sources && data.sources.length) {
+    data.sources.forEach((src, i) => {
+      answerHTML += `<div class="source">🔍 Đoạn ${i+1}: ${src}</div>`;
     });
+  }
+  chatLog.innerHTML += answerHTML;
+  chatLog.scrollTop = chatLog.scrollHeight;
 
-    askBtn.addEventListener("click", async () => {
-      const question = document.getElementById("question").value;
-      const filename = docSelect.value;
-      const formData = new FormData();
-      formData.append("question", question);
-      formData.append("filename", filename);
-      answerDiv.textContent = "⏳ Đang trả lời...";
-      const res = await fetch("/api/chat", { method: "POST", body: formData });
-      const data = await res.json();
-      answerDiv.textContent = data.answer;
-    });
-
-    loadDocs();
-  </script>
+  document.getElementById('question').value = "";
+}
+</script>
 </body>
 </html>
