@@ -1,6 +1,8 @@
 fastapi
 uvicorn
-python-multipart
-PyPDF2
+pypdf
+faiss-cpu
+sentence-transformers
 openai
 jinja2
+python-multipart
