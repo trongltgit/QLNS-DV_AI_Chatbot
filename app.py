@@ -1,46 +1,41 @@
+from fastapi import FastAPI, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
 import os
-from fastapi import FastAPI, UploadFile, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+import uvicorn
 from utils.pdf_reader import extract_chunks
-from utils.vector_store import build_faiss_index, search_faiss
-from utils.ai_utils import ask_ai
-from pydantic import BaseModel
-
-UPLOAD_DIR = "uploads"
-DB_DIR = "db"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(DB_DIR, exist_ok=True)
+from utils.vector_store import store_chunks, search_chunks
+from utils.ai_utils import chat_with_context
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
 
-class Question(BaseModel):
-    question: str
+# CORS cho frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.post("/api/upload")
-async def upload_pdf(file: UploadFile):
-    if not file.filename.endswith(".pdf"):
-        return JSONResponse({"error": "Chỉ hỗ trợ PDF"}, status_code=400)
-
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+# Upload PDF và lưu chunks
+@app.post("/upload")
+async def upload_file(file: UploadFile):
+    file_path = f"uploads/{file.filename}"
+    os.makedirs("uploads", exist_ok=True)
     with open(file_path, "wb") as f:
         f.write(await file.read())
 
     chunks = extract_chunks(file_path)
-    build_faiss_index(chunks, file.filename)
+    store_chunks(chunks)
+    return {"status": "ok", "chunks": len(chunks)}
 
-    return {"message": f"Đã xử lý {file.filename} với {len(chunks)} đoạn."}
+# Chat với tài liệu
+@app.post("/chat")
+async def chat(query: str = Form(...)):
+    context = search_chunks(query)
+    answer = chat_with_context(query, context)
+    return {"answer": answer, "context": context}
 
-@app.post("/api/ask")
-async def ask_question(q: Question):
-    question = q.question
-    docs = search_faiss(question)
-    answer = ask_ai(question, docs)
-    return {"answer": answer, "sources": docs}
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))  # Render sẽ truyền PORT
+    uvicorn.run(app, host="0.0.0.0", port=port)
