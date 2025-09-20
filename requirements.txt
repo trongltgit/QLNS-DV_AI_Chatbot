@@ -1,8 +1,7 @@
 fastapi
 uvicorn
-pypdf
-faiss-cpu
-sentence-transformers
 openai
-jinja2
+pypdf
 python-multipart
+numpy
+scikit-learn
