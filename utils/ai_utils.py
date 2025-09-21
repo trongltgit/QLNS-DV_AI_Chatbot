@@ -1,18 +1,24 @@
 import os
 from openai import OpenAI
 
-# Lấy API key từ biến môi trường
+# Lấy API key từ biến môi trường Render
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def chat_with_context(prompt: str, context: str = "") -> str:
+async def generate_ai_response(prompt: str) -> str:
     """
-    Gọi OpenAI API với ngữ cảnh và prompt.
+    Hàm gọi OpenAI Chat Completions API để sinh câu trả lời.
+    Trả về string.
     """
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",   # nhẹ, nhanh, rẻ
-        messages=[
-            {"role": "system", "content": context},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",   # bạn có thể đổi sang gpt-4o hoặc gpt-3.5-turbo
+            messages=[
+                {"role": "system", "content": "Bạn là chatbot AI hỗ trợ QLNS."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Lỗi khi gọi OpenAI API: {str(e)}"
