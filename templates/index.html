@@ -1,72 +1,107 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Document Chatbot</title>
-    <link rel="stylesheet" href="/static/style.css">
+  <meta charset="UTF-8">
+  <title>AI Chat Demo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f9;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background: #2c7a7b;
+      color: white;
+      padding: 1rem;
+      text-align: center;
+    }
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    form {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      max-width: 600px;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      background: #2c7a7b;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #285e61;
+    }
+    #response {
+      margin-top: 20px;
+      padding: 15px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      max-width: 600px;
+      width: 100%;
+      white-space: pre-wrap;
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>📚 AI Document Chatbot</h1>
+  <header>
+    <h1>AI Chat Demo</h1>
+  </header>
+  <main>
+    <form id="chatForm">
+      <input type="text" id="prompt" placeholder="Nhập câu hỏi của bạn..." required />
+      <button type="submit">Gửi</button>
+    </form>
+    <div id="response"></div>
+  </main>
 
-        <!-- Upload form -->
-        <section class="upload-box">
-            <h2>Upload PDF</h2>
-            <form id="uploadForm">
-                <input type="file" id="fileInput" accept=".pdf" required>
-                <button type="submit">Upload</button>
-            </form>
-            <p id="uploadStatus"></p>
-        </section>
+  <script>
+    const form = document.getElementById("chatForm");
+    const promptInput = document.getElementById("prompt");
+    const responseDiv = document.getElementById("response");
 
-        <!-- Chat form -->
-        <section class="chat-box">
-            <h2>Chat with Document</h2>
-            <form id="chatForm">
-                <input type="text" id="queryInput" placeholder="Ask something..." required>
-                <button type="submit">Send</button>
-            </form>
-            <div id="chatResponse"></div>
-        </section>
-    </div>
-
-    <script>
-        // Upload PDF
-        document.getElementById("uploadForm").addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const fileInput = document.getElementById("fileInput");
-            const formData = new FormData();
-            formData.append("file", fileInput.files[0]);
-
-            const res = await fetch("/upload", { method: "POST", body: formData });
-            const data = await res.json();
-            document.getElementById("uploadStatus").innerText =
-                `✅ Uploaded ${fileInput.files[0].name}, extracted ${data.chunks} chunks.`;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      responseDiv.textContent = "Đang xử lý...";
+      
+      try {
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: promptInput.value })
         });
 
-        // Chat with document
-        document.getElementById("chatForm").addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const query = document.getElementById("queryInput").value;
-            const formData = new FormData();
-            formData.append("query", query);
-
-            const res = await fetch("/chat", { method: "POST", body: formData });
-            const data = await res.json();
-
-            let contextList = "";
-            if (data.context && data.context.length > 0) {
-                contextList = "<h3>📌 Sources:</h3><ul>";
-                data.context.forEach(c => {
-                    contextList += `<li>${c}</li>`;
-                });
-                contextList += "</ul>";
-            }
-
-            document.getElementById("chatResponse").innerHTML =
-                `<h3>💬 Answer:</h3><p>${data.answer}</p>${contextList}`;
-        });
-    </script>
+        const data = await res.json();
+        if (data.response) {
+          responseDiv.textContent = data.response;
+        } else if (data.error) {
+          responseDiv.textContent = "❌ Lỗi: " + data.error;
+        }
+      } catch (err) {
+        responseDiv.textContent = "❌ Lỗi kết nối server: " + err.message;
+      }
+    });
+  </script>
 </body>
 </html>
