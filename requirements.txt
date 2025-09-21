@@ -1,9 +1,8 @@
 fastapi
-uvicorn[standard]
-python-multipart
+uvicorn
 jinja2
+python-multipart
 openai
 pypdf
 python-docx
-pandas
 openpyxl
