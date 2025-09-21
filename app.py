@@ -3,16 +3,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import openai
 import os
 
-# ========================
-# Cấu hình OpenAI API Key
-# ========================
 openai.api_key = os.getenv("OPENAI_API_KEY", "your-openai-key")
 
 app = FastAPI(title="Render FastAPI Minimal Example")
 
-# ========================
-# Trang chủ / frontend
-# ========================
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return """
@@ -34,19 +28,12 @@ async def home():
     </html>
     """
 
-# ========================
-# API Upload file
-# ========================
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     content = await file.read()
     size = len(content)
-    # Bạn có thể xử lý PDF / TXT / CSV ở đây
     return {"filename": file.filename, "size_bytes": size}
 
-# ========================
-# API Chat với OpenAI
-# ========================
 @app.post("/chat")
 async def chat(prompt: str = Form(...)):
     try:
@@ -60,9 +47,6 @@ async def chat(prompt: str = Form(...)):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-# ========================
-# Chạy local (dev)
-# ========================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)), reload=True)
