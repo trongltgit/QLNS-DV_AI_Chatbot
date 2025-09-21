@@ -99,11 +99,13 @@
   </main>
 
   <script>
+  const BASE_URL = "https://qlns-dv-ai-chatbot.onrender.com"; // đổi thành đúng domain Render của bạn
+
   const uploadForm = document.getElementById("uploadForm");
   const fileInput = document.getElementById("fileInput");
   const uploadResponse = document.getElementById("uploadResponse");
 
-  let lastSummary = ""; // lưu tóm tắt file vừa upload (demo)
+  let lastSummary = "";
 
   uploadForm.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -115,7 +117,7 @@
     uploadResponse.textContent = "Đang upload...";
 
     try {
-      const res = await fetch("/upload", { method: "POST", body: formData });
+      const res = await fetch(`${BASE_URL}/upload`, { method: "POST", body: formData });
       const data = await res.json();
       if (data.filename) {
         lastSummary = data.summary || "";
@@ -139,10 +141,9 @@
     try {
       const formData = new FormData();
       formData.append("prompt", promptInput.value);
-      // Nếu có tóm tắt file, gửi kèm như "context"
       if (lastSummary) formData.append("context", lastSummary);
 
-      const res = await fetch("/chat", {
+      const res = await fetch(`${BASE_URL}/chat`, {
         method: "POST",
         body: formData
       });
