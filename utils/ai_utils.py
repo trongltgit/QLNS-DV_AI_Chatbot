@@ -1,24 +1,26 @@
-import os
-from openai import OpenAI
+import openai
 
-# Lấy API key từ biến môi trường Render
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai.api_key = "YOUR_OPENAI_KEY"
 
-async def generate_ai_response(prompt: str) -> str:
-    """
-    Hàm gọi OpenAI Chat Completions API để sinh câu trả lời.
-    Trả về string.
-    """
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",   # bạn có thể đổi sang gpt-4o hoặc gpt-3.5-turbo
-            messages=[
-                {"role": "system", "content": "Bạn là chatbot AI hỗ trợ QLNS."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=500,
-            temperature=0.7,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Lỗi khi gọi OpenAI API: {str(e)}"
+def summarize_text(text):
+    prompt = f"Tóm tắt những điểm chính sau:\n\n{text[:2000]}"
+    resp = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.3,
+        max_tokens=300
+    )
+    return resp['choices'][0]['message']['content'].strip()
+
+def answer_question(text, question):
+    prompt = (
+        f"Bạn là AI trợ lý. Dựa trên nội dung sau:\n\n{text[:2000]}\n\n"
+        f"Trả lời câu hỏi sau một cách chi tiết:\n{question}"
+    )
+    resp = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.3,
+        max_tokens=500
+    )
+    return resp['choices'][0]['message']['content'].strip()
