@@ -99,60 +99,65 @@
   </main>
 
   <script>
-    const uploadForm = document.getElementById("uploadForm");
-    const fileInput = document.getElementById("fileInput");
-    const uploadResponse = document.getElementById("uploadResponse");
+  const uploadForm = document.getElementById("uploadForm");
+  const fileInput = document.getElementById("fileInput");
+  const uploadResponse = document.getElementById("uploadResponse");
 
-    uploadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!fileInput.files.length) return;
-      const file = fileInput.files[0];
+  let lastSummary = ""; // lưu tóm tắt file vừa upload (demo)
 
+  uploadForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!fileInput.files.length) return;
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append("file", file);
+
+    uploadResponse.textContent = "Đang upload...";
+
+    try {
+      const res = await fetch("/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (data.filename) {
+        lastSummary = data.summary || "";
+        uploadResponse.textContent = `✅ Upload thành công: ${data.filename}\n\nTóm tắt:\n${data.summary}`;
+      } else if (data.error) {
+        uploadResponse.textContent = `❌ Lỗi: ${data.error}`;
+      }
+    } catch (err) {
+      uploadResponse.textContent = `❌ Lỗi kết nối server: ${err.message}`;
+    }
+  });
+
+  const chatForm = document.getElementById("chatForm");
+  const promptInput = document.getElementById("prompt");
+  const chatResponse = document.getElementById("chatResponse");
+
+  chatForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    chatResponse.textContent = "Đang xử lý...";
+
+    try {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("prompt", promptInput.value);
+      // Nếu có tóm tắt file, gửi kèm như "context"
+      if (lastSummary) formData.append("context", lastSummary);
 
-      uploadResponse.textContent = "Đang upload...";
+      const res = await fetch("/chat", {
+        method: "POST",
+        body: formData
+      });
 
-      try {
-        const res = await fetch("/upload", { method: "POST", body: formData });
-        const data = await res.json();
-        if (data.filename) {
-          uploadResponse.textContent = `✅ Upload thành công: ${data.filename}\n\nTóm tắt: ${data.summary}`;
-        } else if (data.error) {
-          uploadResponse.textContent = `❌ Lỗi: ${data.error}`;
-        }
-      } catch (err) {
-        uploadResponse.textContent = `❌ Lỗi kết nối server: ${err.message}`;
+      const data = await res.json();
+      if (data.response) {
+        chatResponse.textContent = data.response;
+      } else if (data.error) {
+        chatResponse.textContent = `❌ Lỗi: ${data.error}`;
       }
-    });
+    } catch (err) {
+      chatResponse.textContent = `❌ Lỗi kết nối server: ${err.message}`;
+    }
+  });
+</script>
 
-    const chatForm = document.getElementById("chatForm");
-    const promptInput = document.getElementById("prompt");
-    const chatResponse = document.getElementById("chatResponse");
-
-    chatForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      chatResponse.textContent = "Đang xử lý...";
-
-      try {
-        const formData = new FormData();
-        formData.append("prompt", promptInput.value);
-
-        const res = await fetch("/chat", {
-          method: "POST",
-          body: formData
-        });
-
-        const data = await res.json();
-        if (data.response) {
-          chatResponse.textContent = data.response;
-        } else if (data.error) {
-          chatResponse.textContent = `❌ Lỗi: ${data.error}`;
-        }
-      } catch (err) {
-        chatResponse.textContent = `❌ Lỗi kết nối server: ${err.message}`;
-      }
-    });
-  </script>
 </body>
 </html>
