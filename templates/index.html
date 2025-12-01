@@ -63,7 +63,7 @@
     button:hover {
       background: #285e61;
     }
-    #uploadResponse, #chatResponse {
+    #uploadResponse {
       margin-top: 15px;
       padding: 15px;
       background: #f9f9f9;
@@ -71,95 +71,175 @@
       border: 1px solid #ddd;
       white-space: pre-wrap;
     }
+    #chatContainer {
+      height: 400px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 10px;
+      background: #f9f9f9;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    .message {
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      border-radius: 18px;
+      max-width: 80%;
+      word-wrap: break-word;
+    }
+    .user-message {
+      background: #2c7a7b;
+      color: white;
+      margin-left: auto;
+      text-align: right;
+    }
+    .ai-message {
+      background: #e9ecef;
+      color: #333;
+    }
+    #chatForm {
+      display: flex;
+      gap: 10px;
+    }
+    #prompt {
+      flex: 1;
+    }
+    .clear-btn {
+      background: #dc3545;
+      margin-left: 10px;
+    }
+    .clear-btn:hover {
+      background: #c82333;
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1>AI Chat & File Upload Demo</h1>
+    <h1>AI Chat & File Upload Demo (RAG Style)</h1>
   </header>
   <main>
     <!-- Upload Section -->
     <div class="section">
-      <h2>Upload File</h2>
+      <h2>Upload Tài Liệu (PDF/TXT/DOCX/XLSX)</h2>
       <form id="uploadForm">
         <input type="file" id="fileInput" accept=".txt,.pdf,.docx,.xlsx" required />
-        <button type="submit">Upload</button>
+        <button type="submit">Upload & Tóm Tắt</button>
       </form>
       <div id="uploadResponse"></div>
     </div>
 
     <!-- Chat Section -->
     <div class="section">
-      <h2>Chat with AI</h2>
+      <h2>Chat với AI (Dựa trên Tài Liệu)</h2>
+      <div id="chatContainer"></div>
       <form id="chatForm">
-        <input type="text" id="prompt" placeholder="Nhập câu hỏi của bạn..." required />
+        <input type="text" id="prompt" placeholder="Nhập câu hỏi về tài liệu..." required />
         <button type="submit">Gửi</button>
+        <button type="button" class="clear-btn" id="clearChat">Xóa Lịch Sử</button>
       </form>
-      <div id="chatResponse"></div>
     </div>
   </main>
 
   <script>
-  const BASE_URL = "https://qlns-dv-ai-chatbot.onrender.com"; // đổi thành đúng domain Render của bạn
+    const BASE_URL = "https://qlns-dv-ai-chatbot.onrender.com"; // Đổi nếu cần
 
-  const uploadForm = document.getElementById("uploadForm");
-  const fileInput = document.getElementById("fileInput");
-  const uploadResponse = document.getElementById("uploadResponse");
+    const uploadForm = document.getElementById("uploadForm");
+    const fileInput = document.getElementById("fileInput");
+    const uploadResponse = document.getElementById("uploadResponse");
+    const chatContainer = document.getElementById("chatContainer");
+    const chatForm = document.getElementById("chatForm");
+    const promptInput = document.getElementById("prompt");
+    const clearChatBtn = document.getElementById("clearChat");
 
-  let lastSummary = "";
+    let currentFilename = null;
+    let chatHistory = JSON.parse(localStorage.getItem('chatHistory') || '[]'); // Lưu history local
+    let isProcessing = false;
 
-  uploadForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!fileInput.files.length) return;
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append("file", file);
+    // Render history ban đầu
+    renderChatHistory();
 
-    uploadResponse.textContent = "Đang upload...";
-
-    try {
-      const res = await fetch(`${BASE_URL}/upload`, { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.filename) {
-        lastSummary = data.summary || "";
-        uploadResponse.textContent = `✅ Upload thành công: ${data.filename}\n\nTóm tắt:\n${data.summary}`;
-      } else if (data.error) {
-        uploadResponse.textContent = `❌ Lỗi: ${data.error}`;
-      }
-    } catch (err) {
-      uploadResponse.textContent = `❌ Lỗi kết nối server: ${err.message}`;
-    }
-  });
-
-  const chatForm = document.getElementById("chatForm");
-  const promptInput = document.getElementById("prompt");
-  const chatResponse = document.getElementById("chatResponse");
-
-  chatForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    chatResponse.textContent = "Đang xử lý...";
-
-    try {
+    uploadForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!fileInput.files.length) return;
+      const file = fileInput.files[0];
       const formData = new FormData();
-      formData.append("prompt", promptInput.value);
-      if (lastSummary) formData.append("context", lastSummary);
+      formData.append("file", file);
 
-      const res = await fetch(`${BASE_URL}/chat`, {
-        method: "POST",
-        body: formData
-      });
+      uploadResponse.textContent = "Đang upload...";
 
-      const data = await res.json();
-      if (data.response) {
-        chatResponse.textContent = data.response;
-      } else if (data.error) {
-        chatResponse.textContent = `❌ Lỗi: ${data.error}`;
+      try {
+        const res = await fetch(`${BASE_URL}/upload`, { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.filename) {
+          currentFilename = data.filename;
+          uploadResponse.innerHTML = `✅ Upload thành công: ${data.filename}<br><strong>Tóm tắt:</strong><br>${data.summary}`;
+          chatHistory = []; // Reset chat khi upload mới
+          localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
+          renderChatHistory();
+        } else if (data.error) {
+          uploadResponse.textContent = `❌ Lỗi: ${data.error}`;
+        }
+      } catch (err) {
+        uploadResponse.textContent = `❌ Lỗi: ${err.message}`;
       }
-    } catch (err) {
-      chatResponse.textContent = `❌ Lỗi kết nối server: ${err.message}`;
-    }
-  });
-</script>
+    });
 
+    chatForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const prompt = promptInput.value.trim();
+      if (!prompt || isProcessing) return;
+
+      // Add user message
+      addMessage(prompt, 'user');
+      promptInput.value = '';
+      isProcessing = true;
+      addMessage('Đang suy nghĩ...', 'ai'); // Placeholder
+
+      try {
+        const formData = new FormData();
+        formData.append("prompt", prompt);
+        if (currentFilename) formData.append("context_filename", currentFilename);
+        formData.append("history", JSON.stringify(chatHistory));
+
+        const res = await fetch(`${BASE_URL}/chat`, { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.response) {
+          // Remove placeholder
+          chatContainer.innerHTML = chatContainer.innerHTML.replace('Đang suy nghĩ...', '');
+          addMessage(data.response, 'ai');
+          chatHistory = JSON.parse(data.updated_history || '[]');
+          localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
+        } else {
+          addMessage(`❌ Lỗi: ${data.error}`, 'ai');
+        }
+      } catch (err) {
+        addMessage(`❌ Lỗi kết nối: ${err.message}`, 'ai');
+      }
+      isProcessing = false;
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    });
+
+    clearChatBtn.addEventListener("click", () => {
+      chatHistory = [];
+      localStorage.removeItem('chatHistory');
+      chatContainer.innerHTML = '';
+    });
+
+    function addMessage(text, sender) {
+      const messageDiv = document.createElement('div');
+      messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'ai-message');
+      messageDiv.textContent = text;
+      chatContainer.appendChild(messageDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function renderChatHistory() {
+      chatContainer.innerHTML = '';
+      chatHistory.forEach(msg => {
+        const role = msg.role === 'user' ? 'user' : 'ai';
+        addMessage(msg.content, role);
+      });
+    }
+  </script>
 </body>
 </html>
