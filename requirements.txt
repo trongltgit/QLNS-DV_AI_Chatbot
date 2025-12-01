@@ -6,11 +6,4 @@ openai>=1.40.0
 pypdf
 python-docx
 openpyxl
-
-# LangChain chính thức 2025 (cách cài đúng)
-langchain>=0.2.0
-langchain-openai>=0.1.0
-langchain-text-splitters>=0.2.0   # ← Cái này QUAN TRỌNG NHẤT!
-
-# Optional nhưng nên có
 python-dotenv
