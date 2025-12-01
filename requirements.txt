@@ -2,19 +2,15 @@ fastapi
 uvicorn[standard]
 jinja2
 python-multipart
-openai>=1.0.0
+openai>=1.40.0
 pypdf
 python-docx
 openpyxl
 
-# === THÊM MỚI BẮT BUỘC (do dùng LangChain để chunk & retrieve) ===
-langchain
-langchain-openai
-langchain-text-splitters
+# LangChain chính thức 2025 (cách cài đúng)
+langchain>=0.2.0
+langchain-openai>=0.1.0
+langchain-text-splitters>=0.2.0   # ← Cái này QUAN TRỌNG NHẤT!
 
-# Nếu muốn RAG xịn hơn sau này (vector search) - chưa bắt buộc ngay
-# faiss-cpu          # hoặc faiss-gpu nếu bạn dùng GPU
-# sentence-transformers   # nếu muốn embed local thay vì OpenAI
-
-# Các thứ phụ nhưng nên có
-python-dotenv      # nếu bạn dùng .env local
+# Optional nhưng nên có
+python-dotenv
