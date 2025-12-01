@@ -1,245 +1,177 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>AI Chat & File Upload Demo</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f4f6f9;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      min-height: 100vh;
-    }
-    header {
-      background: #2c7a7b;
-      color: white;
-      padding: 1rem;
-      text-align: center;
-    }
-    main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: flex-start;
-      padding: 2rem;
-      gap: 2rem;
-    }
-    .section {
-      width: 100%;
-      max-width: 600px;
-      background: white;
-      padding: 1.5rem;
-      border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    }
-    h2 {
-      margin-top: 0;
-    }
-    form {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    input[type="text"], input[type="file"] {
-      padding: 10px;
-      font-size: 16px;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-    }
-    button {
-      padding: 10px 20px;
-      font-size: 16px;
-      background: #2c7a7b;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    button:hover {
-      background: #285e61;
-    }
-    #uploadResponse {
-      margin-top: 15px;
-      padding: 15px;
-      background: #f9f9f9;
-      border-radius: 8px;
-      border: 1px solid #ddd;
-      white-space: pre-wrap;
-    }
-    #chatContainer {
-      height: 400px;
-      overflow-y: auto;
-      border: 1px solid #ddd;
-      padding: 10px;
-      background: #f9f9f9;
-      border-radius: 8px;
-      margin-bottom: 10px;
-    }
-    .message {
-      margin-bottom: 10px;
-      padding: 8px 12px;
-      border-radius: 18px;
-      max-width: 80%;
-      word-wrap: break-word;
-    }
-    .user-message {
-      background: #2c7a7b;
-      color: white;
-      margin-left: auto;
-      text-align: right;
-    }
-    .ai-message {
-      background: #e9ecef;
-      color: #333;
-    }
-    #chatForm {
-      display: flex;
-      gap: 10px;
-    }
-    #prompt {
-      flex: 1;
-    }
-    .clear-btn {
-      background: #dc3545;
-      margin-left: 10px;
-    }
-    .clear-btn:hover {
-      background: #c82333;
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>AI Chat & File Upload Demo (RAG Style)</h1>
-  </header>
-  <main>
+{% extends "base.html" %}
+{% block title %}Chatbot AI - Hỏi đáp tài liệu Đảng{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-9 col-xl-8">
+
     <!-- Upload Section -->
-    <div class="section">
-      <h2>Upload Tài Liệu (PDF/TXT/DOCX/XLSX)</h2>
-      <form id="uploadForm">
-        <input type="file" id="fileInput" accept=".txt,.pdf,.docx,.xlsx" required />
-        <button type="submit">Upload & Tóm Tắt</button>
-      </form>
-      <div id="uploadResponse"></div>
+    <div class="card mb-4 shadow-sm">
+      <div class="card-header bg-danger text-white">
+        <h4 class="mb-0">
+          <i class="fas fa-upload"></i> Upload Tài liệu Đảng (PDF, DOCX, TXT, XLSX)
+        </h4>
+      </div>
+      <div class="card-body">
+        <form id="uploadForm">
+          <div class="input-group">
+            <input type="file" id="fileInput" class="form-control" accept=".txt,.pdf,.docx,.xlsx" required>
+            <button type="submit" class="btn btn-danger">
+              <i class="fas fa-paper-plane"></i> Upload & Tóm tắt
+            </button>
+          </div>
+        </form>
+        <div id="uploadResponse" class="mt-3"></div>
+      </div>
     </div>
 
     <!-- Chat Section -->
-    <div class="section">
-      <h2>Chat với AI (Dựa trên Tài Liệu)</h2>
-      <div id="chatContainer"></div>
-      <form id="chatForm">
-        <input type="text" id="prompt" placeholder="Nhập câu hỏi về tài liệu..." required />
-        <button type="submit">Gửi</button>
-        <button type="button" class="clear-btn" id="clearChat">Xóa Lịch Sử</button>
-      </form>
+    <div class="card shadow-sm">
+      <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center">
+        <h4 class="mb-0">
+          <i class="fas fa-robot"></i> Chatbot AI - Hỏi đáp dựa trên tài liệu
+        </h4>
+        <button type="button" class="btn btn-outline-light btn-sm" id="clearChat">
+          <i class="fas fa-trash"></i> Xóa lịch sử
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div id="chatContainer" style="height: 500px; overflow-y: auto; padding: 15px; background: #f8f9fa;">
+          <!-- Tin nhắn sẽ được thêm bằng JS -->
+        </div>
+        <form id="chatForm" class="p-3 border-top bg-white">
+          <div class="input-group">
+            <input type="text" id="prompt" class="form-control form-control-lg" 
+                   placeholder="Nhập câu hỏi về Điều lệ Đảng, Nghị quyết, sinh hoạt chi bộ..." required autocomplete="off">
+            <button type="submit" class="btn btn-danger btn-lg">
+              <i class="fas fa-paper-plane"></i> Gửi
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
-  </main>
 
-  <script>
-    const BASE_URL = "https://qlns-dv-ai-chatbot.onrender.com"; // Đổi nếu cần
+  </div>
+</div>
+{% endblock %}
 
-    const uploadForm = document.getElementById("uploadForm");
-    const fileInput = document.getElementById("fileInput");
-    const uploadResponse = document.getElementById("uploadResponse");
-    const chatContainer = document.getElementById("chatContainer");
-    const chatForm = document.getElementById("chatForm");
-    const promptInput = document.getElementById("prompt");
-    const clearChatBtn = document.getElementById("clearChat");
+{% block scripts %}
+<script>
+  const BASE_URL = "{{ request.url_for('home') }}".replace("/chatbot", ""); // Tự động lấy domain
+  const uploadForm = document.getElementById("uploadForm");
+  const fileInput = document.getElementById("fileInput");
+  const uploadResponse = document.getElementById("uploadResponse");
+  const chatContainer = document.getElementById("chatContainer");
+  const chatForm = document.getElementById("chatForm");
+  const promptInput = document.getElementById("prompt");
+  const clearChatBtn = document.getElementById("clearChat");
 
-    let currentFilename = null;
-    let chatHistory = JSON.parse(localStorage.getItem('chatHistory') || '[]'); // Lưu history local
-    let isProcessing = false;
+  let currentFilename = null;
+  let chatHistory = JSON.parse(localStorage.getItem('chatHistory') || '[]');
+  let isProcessing = false;
 
-    // Render history ban đầu
-    renderChatHistory();
+  // Render lại lịch sử khi load trang
+  renderChatHistory();
 
-    uploadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!fileInput.files.length) return;
-      const file = fileInput.files[0];
+  uploadForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!fileInput.files.length) return;
+
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append("file", file);
+
+    uploadResponse.innerHTML = `<div class="alert alert-info"><i class="fas fa-spinner fa-spin"></i> Đang upload và tóm tắt...</div>`;
+
+    try {
+      const res = await fetch(`${BASE_URL}upload`, { method: "POST", body: formData });
+      const data = await res.json();
+
+      if (data.filename) {
+        currentFilename = data.filename;
+        uploadResponse.innerHTML = `
+          <div class="alert alert-success">
+            <strong>Upload thành công:</strong> ${data.filename}<br><br>
+            <strong>Tóm tắt tài liệu:</strong><br>
+            <div class="border-start border-warning border-4 ps-3 mt-2">${data.summary.replace(/\n/g, '<br>')}</div>
+          </div>`;
+        // Reset chat khi upload tài liệu mới
+        chatHistory = [];
+        localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
+        renderChatHistory();
+      } else {
+        uploadResponse.innerHTML = `<div class="alert alert-danger">Lỗi: ${data.error || "Không phản hồi"}</div>`;
+      }
+    } catch (err) {
+      uploadResponse.innerHTML = `<div class="alert alert-danger">Lỗi kết nối: ${err.message}</div>`;
+    }
+  });
+
+  chatForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const prompt = promptInput.value.trim();
+    if (!prompt || isProcessing) return;
+
+    addMessage(prompt, 'user');
+    promptInput.value = '';
+    isProcessing = true;
+    addMessage('Đang suy nghĩ...', 'ai');
+
+    try {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("prompt", prompt);
+      if (currentFilename) formData.append("context_filename", currentFilename);
+      formData.append("history", JSON.stringify(chatHistory));
 
-      uploadResponse.textContent = "Đang upload...";
+      const res = await fetch(`${BASE_URL}chat`, { method: "POST", body: formData });
+      const data = await res.json();
 
-      try {
-        const res = await fetch(`${BASE_URL}/upload`, { method: "POST", body: formData });
-        const data = await res.json();
-        if (data.filename) {
-          currentFilename = data.filename;
-          uploadResponse.innerHTML = `✅ Upload thành công: ${data.filename}<br><strong>Tóm tắt:</strong><br>${data.summary}`;
-          chatHistory = []; // Reset chat khi upload mới
-          localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
-          renderChatHistory();
-        } else if (data.error) {
-          uploadResponse.textContent = `❌ Lỗi: ${data.error}`;
-        }
-      } catch (err) {
-        uploadResponse.textContent = `❌ Lỗi: ${err.message}`;
+      // Xóa placeholder
+      chatContainer.lastElementChild?.remove();
+
+      if (data.response) {
+        addMessage(data.response, 'ai');
+        chatHistory = data.updated_history ? JSON.parse(data.updated_history) : chatHistory;
+        localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
+      } else {
+        addMessage(`Lỗi từ AI: ${data.error || "Không phản hồi"}`, 'ai');
       }
-    });
+    } catch (err) {
+      chatContainer.lastElementChild?.remove();
+      addMessage(`Lỗi kết nối: ${err.message}`, 'ai');
+    }
 
-    chatForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const prompt = promptInput.value.trim();
-      if (!prompt || isProcessing) return;
+    isProcessing = false;
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+  });
 
-      // Add user message
-      addMessage(prompt, 'user');
-      promptInput.value = '';
-      isProcessing = true;
-      addMessage('Đang suy nghĩ...', 'ai'); // Placeholder
-
-      try {
-        const formData = new FormData();
-        formData.append("prompt", prompt);
-        if (currentFilename) formData.append("context_filename", currentFilename);
-        formData.append("history", JSON.stringify(chatHistory));
-
-        const res = await fetch(`${BASE_URL}/chat`, { method: "POST", body: formData });
-        const data = await res.json();
-        if (data.response) {
-          // Remove placeholder
-          chatContainer.innerHTML = chatContainer.innerHTML.replace('Đang suy nghĩ...', '');
-          addMessage(data.response, 'ai');
-          chatHistory = JSON.parse(data.updated_history || '[]');
-          localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
-        } else {
-          addMessage(`❌ Lỗi: ${data.error}`, 'ai');
-        }
-      } catch (err) {
-        addMessage(`❌ Lỗi kết nối: ${err.message}`, 'ai');
-      }
-      isProcessing = false;
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-    });
-
-    clearChatBtn.addEventListener("click", () => {
+  clearChatBtn.addEventListener("click", () => {
+    if (confirm("Xóa toàn bộ lịch sử trò chuyện?")) {
       chatHistory = [];
       localStorage.removeItem('chatHistory');
       chatContainer.innerHTML = '';
+    }
+  });
+
+  function addMessage(text, sender) {
+    const div = document.createElement('div');
+    div.className = `mb-3 d-flex ${sender === 'user' ? 'justify-content-end' : 'justify-content-start'}`;
+    div.innerHTML = `
+      <div class="p-3 rounded-4 shadow-sm ${sender === 'user' ? 'bg-danger text-white' : 'bg-light text-dark'}"
+           style="max-width: 80%; word-wrap: break-word;">
+        ${text.replace(/\n/g, '<br>')}
+      </div>`;
+    chatContainer.appendChild(div);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+  }
+
+  function renderChatHistory() {
+    chatContainer.innerHTML = '';
+    chatHistory.forEach(msg => {
+      const role = msg.role === 'user' ? 'user' : 'ai';
+      addMessage(msg.content, role);
     });
-
-    function addMessage(text, sender) {
-      const messageDiv = document.createElement('div');
-      messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'ai-message');
-      messageDiv.textContent = text;
-      chatContainer.appendChild(messageDiv);
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-    }
-
-    function renderChatHistory() {
-      chatContainer.innerHTML = '';
-      chatHistory.forEach(msg => {
-        const role = msg.role === 'user' ? 'user' : 'ai';
-        addMessage(msg.content, role);
-      });
-    }
-  </script>
-</body>
-</html>
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+  }
+</script>
+{% endblock %}
