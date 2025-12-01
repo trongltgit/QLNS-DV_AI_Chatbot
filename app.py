@@ -14,7 +14,7 @@ import docx
 import openpyxl
 
 # LangChain cho RAG
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings  # Để embed nếu cần, nhưng dùng simple cho giờ
 from langchain.docstore.document import Document
 
@@ -149,3 +149,4 @@ async def chat_endpoint(
         
     except Exception as e:
         return JSONResponse({"error": f"❌ Lỗi: {str(e)}"})
+
