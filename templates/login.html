@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Đăng nhập hệ thống{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center align-items-center" style="min-height: 80vh;">
+  <div class="col-md-5 col-lg-4">
+    <div class="card shadow-lg border-0 rounded-4">
+      <div class="card-body p-5 text-center">
+        <img src="/static/logo-dangky.png" alt="Logo Đảng" class="logo-img mb-4">
+        <h2 class="text-danger fw-bold mb-2">ĐĂNG NHẬP HỆ THỐNG</h2>
+        <p class="text-muted mb-4">Quản lý Nhân sự & Đảng viên - Chatbot AI</p>
+
+        <form method="POST" action="/login">
+          <div class="mb-4">
+            <div class="input-group input-group-lg">
+              <span class="input-group-text bg-danger text-white"><i class="fas fa-user"></i></span>
+              <input type="text" name="username" class="form-control" placeholder="Tên đăng nhập" required autofocus>
+            </div>
+          </div>
+          <div class="mb-4">
+            <div class="input-group input-group-lg">
+              <span class="input-group-text bg-danger text-white"><i class="fas fa-lock"></i></span>
+              <input type="password" name="password" class="form-control" placeholder="Mật khẩu" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-dang btn-lg w-100 rounded-pill">
+            <i class="fas fa-sign-in-alt"></i> ĐĂNG NHẬP NGAY
+          </button>
+        </form>
+
+        <hr class="my-4">
+        <div class="text-start">
+          <small class="text-muted">
+            <strong>Tài khoản thử nghiệm:</strong><br>
+            <code class="bg-light px-2 py-1 rounded">admin</code> → Mật khẩu: <code>Test@321</code><br>
+            <code class="bg-light px-2 py-1 rounded">user_demo</code> → Mật khẩu: <code>Test@123</code><br>
+            <code class="bg-light px-2 py-1 rounded">leader1</code> → Mật khẩu: <code>Test@123</code>
+          </small>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
