@@ -1,46 +1,43 @@
 {% extends "base.html" %}
-{% block title %}Chatbot AI - Hỏi đáp tài liệu Đảng{% endblock %}
+{% block title %}Chatbot AI{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-xl-10">
-
     <!-- Upload -->
     <div class="card mb-4 border-0 shadow-lg">
       <div class="card-header bg-danger text-white py-3">
-        <h4 class="mb-0"><i class="fas fa-cloud-upload-alt"></i> Upload Tài liệu Đảng (PDF, DOCX, TXT, XLSX)</h4>
+        <h4 class="mb-0"><i class="fas fa-cloud-upload-alt"></i> Upload Tài liệu Đảng</h4>
       </div>
       <div class="card-body">
-        <form id="uploadForm">
-          <div class="input-group input-group-lg">
-            <input type="file" id="fileInput" class="form-control" accept=".pdf,.txt,.docx,.xlsx" required>
+        <form id="uploadForm" enctype="multipart/form-data">
+          <div class="input-group">
+            <input type="file" id="fileInput" class="form-control" accept=".pdf,.docx,.txt,.xlsx" required>
             <button type="submit" class="btn btn-danger">Upload & Tóm tắt</button>
           </div>
         </form>
-        <div id="uploadResponse" class="mt-4"></div>
+        <div id="uploadResponse" class="mt-3"></div>
       </div>
     </div>
 
     <!-- Chat -->
     <div class="card border-0 shadow-lg">
-      <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center py-3">
-        <h4 class="mb-0"><i class="fas fa-robot"></i> Chatbot AI - Hỏi đáp dựa trên tài liệu</h4>
-        <button id="clearChat" class="btn btn-outline-light btn-sm rounded-pill">
-          <i class="fas fa-trash-alt"></i> Xóa lịch sử
-        </button>
+      <div class="card-header bg-danger text-white d-flex justify-content-between py-3">
+        <h4 class="mb-0"><i class="fas fa-robot"></i> Chatbot AI</h4>
+        <button id="clearChat" class="btn btn-outline-light btn-sm">Xóa lịch sử</button>
       </div>
       <div class="card-body p-0">
-        <div id="chatContainer" style="height: 580px; overflow-y: auto; padding: 20px; background: #f8f9fa;"></div>
+        <div id="chatContainer" class="p-3" style="height: 400px; overflow-y: auto; background: #f8f9fa;">
+          <div class="text-center text-muted py-3">Upload tài liệu rồi chat nhé!</div>
+        </div>
         <form id="chatForm" class="p-3 border-top bg-white">
           <div class="input-group">
-            <input type="text" id="prompt" class="form-control form-control-lg border-danger" 
-                   placeholder="Ví dụ: Điều 4 Điều lệ Đảng quy định thế nào? Sinh hoạt chi bộ tháng này ra sao?" required>
-            <button type="submit" class="btn btn-danger btn-lg px-4">Gửi</button>
+            <input type="text" id="prompt" class="form-control" placeholder="Hỏi về tài liệu...">
+            <button type="submit" class="btn btn-danger">Gửi</button>
           </div>
         </form>
       </div>
     </div>
-
   </div>
 </div>
 {% endblock %}
@@ -48,37 +45,80 @@
 {% block scripts %}
 <script>
 let chatHistory = [];
+const chatContainer = document.getElementById('chatContainer');
+const uploadForm = document.getElementById('uploadForm');
+const fileInput = document.getElementById('fileInput');
+const uploadResponse = document.getElementById('uploadResponse');
+const chatForm = document.getElementById('chatForm');
+const promptInput = document.getElementById('prompt');
+const clearBtn = document.getElementById('clearChat');
 
 function addMessage(text, sender) {
-  const chatBox = document.getElementById("chatBox");
-  const div = document.createElement("div");
-  div.className = `message ${sender}-message`;
-  div.innerHTML = `<p>${text.replace(/\n/g, '<br>')}</p>`;
-  chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  const div = document.createElement('div');
+  div.className = `mb-3 ${sender === 'user' ? 'text-end' : 'text-start'}`;
+  div.innerHTML = `<div class="d-inline-block p-2 rounded ${sender === 'user' ? 'bg-danger text-white' : 'bg-light'}">${text.replace(/\n/g, '<br>')}</div>`;
+  chatContainer.appendChild(div);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+  if (sender === 'ai' && chatHistory.length === 0) chatContainer.innerHTML = '';  // Xóa placeholder
 }
 
-document.getElementById("chatForm").addEventListener("submit", async (e) => {
+uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const input = document.getElementById("promptInput");
-  const prompt = input.value.trim();
+  if (!fileInput.files[0]) {
+    uploadResponse.innerHTML = '<div class="alert alert-warning">Chọn file trước!</div>';
+    return;
+  }
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  uploadResponse.innerHTML = '<div class="alert alert-info">Đang upload...</div>';
+
+  try {
+    const res = await fetch('/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.error) {
+      uploadResponse.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+    } else {
+      uploadResponse.innerHTML = `
+        <div class="alert alert-success">
+          <strong>${data.filename}</strong><br>
+          <strong>Tóm tắt:</strong> ${data.summary.replace(/\n/g, '<br>')}
+        </div>`;
+      chatHistory = [];  // Reset chat sau upload
+      addMessage('Tài liệu đã upload! Bắt đầu chat nhé.', 'ai');
+    }
+  } catch (err) {
+    uploadResponse.innerHTML = `<div class="alert alert-danger">Lỗi: ${err.message}</div>`;
+  }
+});
+
+chatForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const prompt = promptInput.value.trim();
   if (!prompt) return;
-  
-  addMessage(prompt, "user");
-  input.value = "";
-  
-  const response = await fetch("/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      "prompt": prompt,
-      "history": JSON.stringify(chatHistory)
-    })
-  });
-  
-  const data = await response.json();
-  addMessage(data.response, "ai");
-  chatHistory = JSON.parse(data.updated_history || "[]");
+  addMessage(prompt, 'user');
+  promptInput.value = '';
+  addMessage('Đang suy nghĩ...', 'ai');
+
+  try {
+    const formData = new FormData();
+    formData.append('prompt', prompt);
+    formData.append('history', JSON.stringify(chatHistory));
+    const res = await fetch('/chat', { method: 'POST', body: formData });
+    const data = await res.json();
+    chatContainer.lastElementChild.remove();  // Xóa "Đang suy nghĩ..."
+    addMessage(data.response, 'ai');
+    chatHistory = JSON.parse(data.updated_history || '[]');
+  } catch (err) {
+    chatContainer.lastElementChild.remove();
+    addMessage('Lỗi kết nối, thử lại nhé!', 'ai');
+  }
+});
+
+clearBtn.addEventListener('click', () => {
+  if (confirm('Xóa lịch sử chat?')) {
+    chatContainer.innerHTML = '<div class="text-center text-muted py-3">Lịch sử đã xóa!</div>';
+    chatHistory = [];
+  }
 });
 </script>
 {% endblock %}
