@@ -1,12 +1,14 @@
-# app.py – HOÀN CHỈNH CUỐI CÙNG, CHẠY NGON TRÊN RENDER
+# app.py – FIX LỖI 500, THỨ TỰ THAM SỐ ĐÚNG, CHẠY NGON RENDER
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import Response
 from openai import OpenAI
 import os, json, hashlib, secrets
+import json as json_lib  # Để lưu DB
 
 from pypdf import PdfReader
 import docx, openpyxl
@@ -22,10 +24,23 @@ templates = Jinja2Templates(directory="templates")
 CURRENT_CONTEXT = ""
 CURRENT_FILENAME = ""
 
-USERS_DB = {
-    "admin": {"password": hashlib.sha256("Test@321".encode()).hexdigest(), "full_name": "Quản trị viên", "role": "admin"},
-    "user_demo": {"password": hashlib.sha256("Test@123".encode()).hexdigest(), "full_name": "Đảng viên Demo", "role": "user"}
-}
+# Load USERS_DB từ file JSON nếu có (persistent)
+USERS_FILE = "users.json"
+if os.path.exists(USERS_FILE):
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        USERS_DB = json_lib.load(f)
+else:
+    USERS_DB = {
+        "admin": {"password": hashlib.sha256("Test@321".encode()).hexdigest(), "full_name": "Quản trị viên", "role": "admin"},
+        "user_demo": {"password": hashlib.sha256("Test@123".encode()).hexdigest(), "full_name": "Đảng viên Demo", "role": "user"}
+    }
+    # Lưu mặc định
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json_lib.dump(USERS_DB, f, ensure_ascii=False, indent=2)
+
+def save_users_db():
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json_lib.dump(USERS_DB, f, ensure_ascii=False, indent=2)
 
 def get_current_user(request: Request):
     return request.session.get("user")
@@ -34,7 +49,7 @@ def require_admin(user):
     if not user or user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Chỉ admin mới được truy cập")
 
-# ====================== RAG FUNCTIONS ======================
+# ====================== RAG FUNCTIONS (GIỮ NGUYÊN) ======================
 def extract_text_from_file(file_path: str, filename: str) -> str:
     ext = filename.lower().split(".")[-1]
     text = ""
@@ -97,34 +112,44 @@ async def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login")
 
-# ====================== USER PROFILE ======================
 @app.get("/user/profile")
 async def user_profile(request: Request, user=Depends(get_current_user)):
     if not user: return RedirectResponse("/login")
     return templates.TemplateResponse("user_profile.html", {"request": request, "user": user})
 
-# ====================== ADMIN PANEL ======================
+# ====================== ADMIN PANEL (FIX COOKIES & THỨ TỰ) ======================
 @app.get("/admin/users")
 async def admin_users(request: Request, user=Depends(get_current_user)):
     require_admin(user)
     users_list = [{"username": k, **v} for k, v in USERS_DB.items()]
-    return templates.TemplateResponse("admin_users.html", {"request": request, "user": user, "users": users_list, "success": request._cookies.get("msg")})
+    success = request.session.pop("success", None)  # Lấy từ session thay cookies
+    return templates.TemplateResponse("admin_users.html", {"request": request, "user": user, "users": users_list, "success": success})
 
 @app.post("/admin/users/add")
-async def admin_add_user(request: Request, user=Depends(get_current_user), username: str = Form(...), full_name: str = Form(...), password: str = Form(...), role: str = Form("user")):
+async def admin_add_user(
+    username: str = Form(...), full_name: str = Form(...), password: str = Form(...), role: str = Form("user"),
+    request: Request = None, user=Depends(get_current_user)  # ← FIX: Request SAU Form
+):
     require_admin(user)
     if username in USERS_DB:
-        return templates.TemplateResponse("admin_users.html", {"request": request, "user": user, "users": [{"username": k, **v} for k, v in USERS_DB.items()], "error": "Username đã tồn tại!"})
-    USERS_DB[username] = {"password": hashlib.sha256(password.encode()).hexdigest(), "full_name": full_name, "role": role}
-    response = RedirectResponse("/admin/users", status_code=302)
-    response.set_cookie("msg", f"Đã thêm user {username} thành công!")
-    return response
+        request.session["error"] = "Username đã tồn tại!"
+        return RedirectResponse("/admin/users", status_code=302)
+    USERS_DB[username] = {
+        "password": hashlib.sha256(password.encode()).hexdigest(),
+        "full_name": full_name,
+        "role": role
+    }
+    save_users_db()  # Lưu DB
+    request.session["success"] = f"Đã thêm user {username} thành công!"
+    return RedirectResponse("/admin/users", status_code=302)
 
 @app.post("/admin/users/delete/{username}")
 async def admin_delete_user(username: str, user=Depends(get_current_user)):
     require_admin(user)
     if username in USERS_DB and username != "admin":
         del USERS_DB[username]
+        save_users_db()
+    request.session["success"] = "Đã xóa user thành công!"
     return RedirectResponse("/admin/users", status_code=302)
 
 @app.post("/admin/users/reset/{username}")
@@ -132,14 +157,18 @@ async def admin_reset_pass(username: str, user=Depends(get_current_user)):
     require_admin(user)
     if username in USERS_DB:
         USERS_DB[username]["password"] = hashlib.sha256("123456".encode()).hexdigest()
+        save_users_db()
+    request.session["success"] = "Đã reset mật khẩu về 123456!"
     return RedirectResponse("/admin/users", status_code=302)
 
-# ====================== UPLOAD & CHAT ======================
+# ====================== UPLOAD & CHAT (FIX "NO FILE") ======================
 @app.post("/upload")
 async def upload(file: UploadFile = File(...), user=Depends(get_current_user)):
     if not user: return JSONResponse({"error": "Chưa đăng nhập"}, status_code=401)
     global CURRENT_CONTEXT, CURRENT_FILENAME
-    filename = file.filename or "unknown.file"
+    filename = file.filename
+    if not filename or filename == "":
+        return JSONResponse({"error": "Không có file được chọn! Vui lòng chọn file PDF/DOCX/TXT/XLSX."}, status_code=400)
     save_path = f"static/{filename}"
     os.makedirs("static", exist_ok=True)
     content = await file.read()
@@ -164,7 +193,7 @@ async def upload(file: UploadFile = File(...), user=Depends(get_current_user)):
 async def chat(prompt: str = Form(""), history: str = Form("[]"), user=Depends(get_current_user)):
     if not user: return JSONResponse({"error": "Chưa đăng nhập"}, status_code=401)
     global CURRENT_CONTEXT
-    try: history_list = json.loads(history)
+    try: history_list = json_lib.loads(history)
     except: history_list = []
     
     messages = [{"role": "system", "content": "Bạn là trợ lý AI của Đảng Cộng sản Việt Nam. Trả lời trang trọng, chính xác, bằng tiếng Việt."}]
@@ -185,7 +214,7 @@ async def chat(prompt: str = Form(""), history: str = Form("[]"), user=Depends(g
         answer = f"Lỗi kết nối OpenAI: {str(e)}"
     
     new_history = [m for m in messages if m["role"] != "system"]
-    return JSONResponse({"response": answer, "updated_history": json.dumps(new_history, ensure_ascii=False)})
+    return JSONResponse({"response": answer, "updated_history": json_lib.dumps(new_history, ensure_ascii=False)})
 
 if __name__ == "__main__":
     import uvicorn
