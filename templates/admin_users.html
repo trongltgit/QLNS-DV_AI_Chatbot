@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Quản lý người dùng{% endblock %}
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="row">
+    <div class="col-12">
+      <div class="card shadow-lg border-0">
+        <div class="card-header bg-danger text-white">
+          <h3 class="mb-0"><i class="fas fa-users-cog"></i> QUẢN LÝ NGƯỜI DÙNG</h3>
+        </div>
+        <div class="card-body">
+          {% if error %}
+          <div class="alert alert-danger">{{ error }}</div>
+          {% endif %}
+
+          <!-- Form thêm user -->
+          <form method="post" action="/admin/users/add" class="row g-3 mb-4 p-3 bg-light rounded">
+            <div class="col-md-3">
+              <input type="text" name="username" class="form-control" placeholder="Tên đăng nhập" required>
+            </div>
+            <div class="col-md-3">
+              <input type="text" name="full_name" class="form-control" placeholder="Họ và tên" required>
+            </div>
+            <div class="col-md-2">
+              <input type="password" name="password" class="form-control" placeholder="Mật khẩu" required>
+            </div>
+            <div class="col-md-2">
+              <select name="role" class="form-select">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <button type="submit" class="btn btn-success w-100">Thêm mới</button>
+            </div>
+          </form>
+
+          <!-- Bảng danh sách -->
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead class="table-danger">
+                <tr>
+                  <th>Username</th>
+                  <th>Họ tên</th>
+                  <th>Role</th>
+                  <th>Hành động</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for u in users %}
+                <tr>
+                  <td><strong>{{ u.username }}</strong></td>
+                  <td>{{ u.full_name }}</td>
+                  <td><span class="badge bg-{{ 'warning' if u.role == 'admin' else 'primary' }}">{{ u.role.upper() }}</span></td>
+                  <td>
+                    {% if u.username != "admin" %}
+                    <form method="post" action="/admin/users/reset/{{ u.username }}" class="d-inline">
+                      <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Reset mật khẩu về 123456?')">Reset MK</button>
+                    </form>
+                    <form method="post" action="/admin/users/delete/{{ u.username }}" class="d-inline">
+                      <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Xóa user này?')">Xóa</button>
+                    </form>
+                    {% else %}
+                    <span class="text-muted">Không thể xóa</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
