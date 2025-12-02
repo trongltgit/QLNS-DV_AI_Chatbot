@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Hồ sơ cá nhân{% endblock %}
+{% block content %}
+<div class="card shadow-lg border-0">
+  <div class="card-header bg-danger text-white">
+    <h4><i class="fas fa-id-card"></i> HỒ SƠ CÁ NHÂN</h4>
+  </div>
+  <div class="card-body text-center">
+    <h5>{{ user.full_name }}</h5>
+    <p><strong>Username:</strong> {{ user.username }}</p>
+    <p><strong>Quyền:</strong> <span class="badge bg-warning text-dark">{{ user.role.upper() }}</span></p>
+    <a href="/" class="btn btn-dang">Quay lại Chatbot</a>
+  </div>
+</div>
+{% endblock %}
