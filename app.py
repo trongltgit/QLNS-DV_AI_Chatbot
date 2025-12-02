@@ -1,4 +1,4 @@
-# app.py – HOÀN CHỈNH 100%, CHẠY NGON TRÊN RENDER
+# app.py – HOÀN CHỈNH CUỐI CÙNG, CHẠY NGON TRÊN RENDER
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,7 +22,6 @@ templates = Jinja2Templates(directory="templates")
 CURRENT_CONTEXT = ""
 CURRENT_FILENAME = ""
 
-# USER DB – lưu trong bộ nhớ (sau này có thể đổi sang SQLite)
 USERS_DB = {
     "admin": {"password": hashlib.sha256("Test@321".encode()).hexdigest(), "full_name": "Quản trị viên", "role": "admin"},
     "user_demo": {"password": hashlib.sha256("Test@123".encode()).hexdigest(), "full_name": "Đảng viên Demo", "role": "user"}
@@ -98,45 +97,41 @@ async def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login")
 
+# ====================== USER PROFILE ======================
+@app.get("/user/profile")
+async def user_profile(request: Request, user=Depends(get_current_user)):
+    if not user: return RedirectResponse("/login")
+    return templates.TemplateResponse("user_profile.html", {"request": request, "user": user})
+
 # ====================== ADMIN PANEL ======================
 @app.get("/admin/users")
 async def admin_users(request: Request, user=Depends(get_current_user)):
     require_admin(user)
     users_list = [{"username": k, **v} for k, v in USERS_DB.items()]
-    return templates.TemplateResponse("admin_users.html", {"request": request, "user": user, "users": users_list})
+    return templates.TemplateResponse("admin_users.html", {"request": request, "user": user, "users": users_list, "success": request._cookies.get("msg")})
 
 @app.post("/admin/users/add")
-async def admin_add_user(
-    request: Request, user=Depends(get_current_user),
-    username: str = Form(...), full_name: str = Form(...), password: str = Form(...), role: str = Form("user")
-):
+async def admin_add_user(request: Request, user=Depends(get_current_user), username: str = Form(...), full_name: str = Form(...), password: str = Form(...), role: str = Form("user")):
     require_admin(user)
     if username in USERS_DB:
-        return templates.TemplateResponse("admin_users.html", {
-            "request": request, "user": user,
-            "users": [{"username": k, **v} for k, v in USERS_DB.items()],
-            "error": "Username đã tồn tại!"
-        })
-    USERS_DB[username] = {
-        "password": hashlib.sha256(password.encode()).hexdigest(),
-        "full_name": full_name,
-        "role": role
-    }
-    return RedirectResponse("/admin/users", status_code=302)
+        return templates.TemplateResponse("admin_users.html", {"request": request, "user": user, "users": [{"username": k, **v} for k, v in USERS_DB.items()], "error": "Username đã tồn tại!"})
+    USERS_DB[username] = {"password": hashlib.sha256(password.encode()).hexdigest(), "full_name": full_name, "role": role}
+    response = RedirectResponse("/admin/users", status_code=302)
+    response.set_cookie("msg", f"Đã thêm user {username} thành công!")
+    return response
 
 @app.post("/admin/users/delete/{username}")
-async def admin_delete_user(username: str, request: Request, user=Depends(get_current_user)):
+async def admin_delete_user(username: str, user=Depends(get_current_user)):
     require_admin(user)
     if username in USERS_DB and username != "admin":
         del USERS_DB[username]
     return RedirectResponse("/admin/users", status_code=302)
 
 @app.post("/admin/users/reset/{username}")
-async def admin_reset_pass(username: str, request: Request, user=Depends(get_current_user)):
+async def admin_reset_pass(username: str, user=Depends(get_current_user)):
     require_admin(user)
     if username in USERS_DB:
-        new_pass = "123456"  # mật khẩu mặc định sau reset
-        USERS_DB[username]["password"] = hashlib.sha256(new_pass.encode()).hexdigest()
+        USERS_DB[username]["password"] = hashlib.sha256("123456".encode()).hexdigest()
     return RedirectResponse("/admin/users", status_code=302)
 
 # ====================== UPLOAD & CHAT ======================
@@ -144,24 +139,23 @@ async def admin_reset_pass(username: str, request: Request, user=Depends(get_cur
 async def upload(file: UploadFile = File(...), user=Depends(get_current_user)):
     if not user: return JSONResponse({"error": "Chưa đăng nhập"}, status_code=401)
     global CURRENT_CONTEXT, CURRENT_FILENAME
-    filename = file.filename
+    filename = file.filename or "unknown.file"
     save_path = f"static/{filename}"
     os.makedirs("static", exist_ok=True)
-    with open(save_path, "wb") as f:
-        f.write(await file.read())
+    content = await file.read()
+    with open(save_path, "wb") as f: f.write(content)
     
     text = extract_text_from_file(save_path, filename)
     if len(text.strip()) < 50:
-        return JSONResponse({"error": "File rỗng hoặc không đọc được"}, status_code=400)
+        return JSONResponse({"error": "File rỗng hoặc không đọc được nội dung"}, status_code=400)
     
     try:
-        summary = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "Tóm tắt ngắn gọn bằng tiếng Việt, dưới 150 từ."}, {"role": "user", "content": text[:8000]}],
-            temperature=0.3
-        ).choices[0].message.content
-    except:
-        summary = "Không tạo được tóm tắt."
+        summary = client.chat.completions.create(model="gpt-4o-mini", messages=[
+            {"role": "system", "content": "Tóm tắt ngắn gọn bằng tiếng Việt, dưới 150 từ."},
+            {"role": "user", "content": text[:8000]}
+        ], temperature=0.3).choices[0].message.content
+    except Exception as e:
+        summary = f"Lỗi API: {str(e)[:100]}"
     
     CURRENT_CONTEXT, CURRENT_FILENAME = text, filename
     return JSONResponse({"filename": filename, "summary": summary})
@@ -170,14 +164,10 @@ async def upload(file: UploadFile = File(...), user=Depends(get_current_user)):
 async def chat(prompt: str = Form(""), history: str = Form("[]"), user=Depends(get_current_user)):
     if not user: return JSONResponse({"error": "Chưa đăng nhập"}, status_code=401)
     global CURRENT_CONTEXT
-    
-    try:
-        history_list = json.loads(history)
-    except:
-        history_list = []
+    try: history_list = json.loads(history)
+    except: history_list = []
     
     messages = [{"role": "system", "content": "Bạn là trợ lý AI của Đảng Cộng sản Việt Nam. Trả lời trang trọng, chính xác, bằng tiếng Việt."}]
-    
     if CURRENT_CONTEXT:
         chunks = split_text_into_chunks(CURRENT_CONTEXT)
         relevant = retrieve_relevant_chunks(prompt, chunks)
@@ -195,10 +185,7 @@ async def chat(prompt: str = Form(""), history: str = Form("[]"), user=Depends(g
         answer = f"Lỗi kết nối OpenAI: {str(e)}"
     
     new_history = [m for m in messages if m["role"] != "system"]
-    return JSONResponse({
-        "response": answer,
-        "updated_history": json.dumps(new_history, ensure_ascii=False)
-    })
+    return JSONResponse({"response": answer, "updated_history": json.dumps(new_history, ensure_ascii=False)})
 
 if __name__ == "__main__":
     import uvicorn
