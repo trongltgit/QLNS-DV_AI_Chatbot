@@ -47,104 +47,38 @@
 
 {% block scripts %}
 <script>
-  const BASE_URL = location.origin + "/";
-  const uploadForm = document.getElementById("uploadForm");
-  const fileInput = document.getElementById("fileInput");
-  const uploadResponse = document.getElementById("uploadResponse");
-  const chatContainer = document.getElementById("chatContainer");
-  const chatForm = document.getElementById("chatForm");
-  const promptInput = document.getElementById("prompt");
-  const clearChatBtn = document.getElementById("clearChat");
+let chatHistory = [];
 
-  let currentFilename = null;
-  let chatHistory = JSON.parse(localStorage.getItem('chatHistory') || '[]');
-  let isProcessing = false;
+function addMessage(text, sender) {
+  const chatBox = document.getElementById("chatBox");
+  const div = document.createElement("div");
+  div.className = `message ${sender}-message`;
+  div.innerHTML = `<p>${text.replace(/\n/g, '<br>')}</p>`;
+  chatBox.appendChild(div);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
 
-  renderChatHistory();
-
-  uploadForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!fileInput.files.length) return;
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append("file", file);
-    uploadResponse.innerHTML = `<div class="alert alert-info"><i class="fas fa-spinner fa-spin"></i> Đang xử lý tài liệu...</div>`;
-
-    try {
-      const res = await fetch(`${BASE_URL}upload`, { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.filename) {
-        currentFilename = data.filename;
-        uploadResponse.innerHTML = `
-          <div class="alert alert-success border-start border-success border-5">
-            <h5>Upload thành công: ${data.filename}</h5>
-            <strong>Tóm tắt tài liệu:</strong><br>
-            <div class="mt-2 p-3 bg-light rounded">${data.summary.replace(/\n/g, '<br>')}</div>
-          </div>`;
-        chatHistory = []; localStorage.setItem('chatHistory', '[]'); renderChatHistory();
-      } else {
-        uploadResponse.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
-      }
-    } catch (err) {
-      uploadResponse.innerHTML = `<div class="alert alert-danger">Lỗi: ${err.message}</div>`;
-    }
+document.getElementById("chatForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("promptInput");
+  const prompt = input.value.trim();
+  if (!prompt) return;
+  
+  addMessage(prompt, "user");
+  input.value = "";
+  
+  const response = await fetch("/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      "prompt": prompt,
+      "history": JSON.stringify(chatHistory)
+    })
   });
-
-  chatForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const prompt = promptInput.value.trim();
-    if (!prompt || isProcessing) return;
-
-    addMessage(prompt, 'user');
-    promptInput.value = ''; isProcessing = true;
-    addMessage('Đang suy nghĩ...', 'ai');
-
-    try {
-      const formData = new FormData();
-      formData.append("prompt", prompt);
-      if (currentFilename) formData.append("context_filename", currentFilename);
-      formData.append("history", JSON.stringify(chatHistory));
-
-      const res = await fetch(`${BASE_URL}chat`, { method: "POST", body: formData });
-      const data = await res.json();
-
-      chatContainer.removeChild(chatContainer.lastElementChild);
-      if (data.response) {
-        addMessage(data.response, 'ai');
-        chatHistory = data.updated_history ? JSON.parse(data.updated_history) : chatHistory;
-        localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
-      } else {
-        addMessage(`Lỗi: ${data.error}`, 'ai');
-      }
-    } catch (err) {
-      chatContainer.removeChild(chatContainer.lastElementChild);
-      addMessage(`Lỗi kết nối: ${err.message}`, 'ai');
-    }
-    isProcessing = false;
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-  });
-
-  clearChatBtn.addEventListener("click", () => {
-    if (confirm("Xóa toàn bộ lịch sử trò chuyện?")) {
-      chatHistory = []; localStorage.removeItem('chatHistory'); chatContainer.innerHTML = ''; 
-    }
-  });
-
-  function addMessage(text, sender) {
-    const bubble = document.createElement('div');
-    bubble.className = `mb-4 d-flex ${sender === 'user' ? 'justify-content-end' : 'justify-content-start'}`;
-    bubble.innerHTML = `
-      <div class="p-3 rounded-4 shadow-sm ${sender === 'user' ? 'bg-danger text-white' : 'bg-light text-dark'}"
-           style="max-width: 80%; word-wrap: break-word;">
-        ${text.replace(/\n/g, '<br>')}
-      </div>`;
-    chatContainer.appendChild(bubble);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-  }
-
-  function renderChatHistory() {
-    chatContainer.innerHTML = '';
-    chatHistory.forEach(m => addMessage(m.content, m.role === 'user' ? 'user' : 'ai'));
-  }
+  
+  const data = await response.json();
+  addMessage(data.response, "ai");
+  chatHistory = JSON.parse(data.updated_history || "[]");
+});
 </script>
 {% endblock %}
