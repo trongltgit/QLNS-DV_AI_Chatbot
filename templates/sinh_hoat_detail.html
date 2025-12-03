@@ -1,0 +1,78 @@
+{# templates/sinh_hoat_detail.html
+   Yêu cầu backend: render_template("sinh_hoat_detail.html", sh=sh, chi=chi, members=members, attendances=attendances)
+   attendances nên là dict mapping dang_vien_id -> attendance object (hoặc None)
+#}
+{% extends "base.html" %}
+{% block title %}Chi tiết buổi: {{ sh.tieu_de }}{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+  <div class="row">
+    <div class="col-md-8">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h4>{{ sh.tieu_de }}</h4>
+          <p class="text-muted">Ngày: {{ sh.ngay_sinh_hoat.strftime('%Y-%m-%d %H:%M') }} — Hình thức: {{ sh.hinh_thuc }}</p>
+          <p>{{ sh.noi_dung or "-" }}</p>
+          <p><strong>Ghi chú:</strong> {{ sh.ghi_chu or "-" }}</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <h5>Điểm danh thành viên</h5>
+          {% if user and (user.role == 'admin' or user.username == chi.name ~ '_leader') %}
+          <form method="post" action="/sinh_hoat/{{ sh.id }}/attendance">
+            <table class="table">
+              <thead><tr><th>#</th><th>Họ tên</th><th>Username</th><th>Có mặt</th><th>Lý do vắng</th></tr></thead>
+              <tbody>
+                {% for m in members %}
+                {% set att = attendances.get(m.id) %}
+                <tr>
+                  <td>{{ loop.index }}</td>
+                  <td>{{ m.full_name }}</td>
+                  <td>{{ m.username or '-' }}</td>
+                  <td><input type="checkbox" name="attendance_{{ m.id }}" {% if att and att.co_mat %}checked{% endif %}></td>
+                  <td><input name="reason_{{ m.id }}" class="form-control" value="{{ att.ly_do_vang if att else '' }}"></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            <button class="btn btn-primary">Lưu điểm danh</button>
+          </form>
+          {% else %}
+          <div class="alert alert-info">Bạn không có quyền chỉnh điểm danh. Nếu bạn là đảng viên, bạn có thể xem lịch sử cá nhân tại Hồ sơ.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6>Thông tin buổi</h6>
+          <p>Chi bộ: <strong>{{ chi.name }}</strong></p>
+          <p>Số thành viên: {{ members|length }}</p>
+          <p>Số đã điểm danh: {{ attendances|length }}</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <h6>Thành viên vắng</h6>
+          <ul class="list-group list-group-flush">
+            {% for a in attendances.values() %}
+              {% if not a.co_mat %}
+              <li class="list-group-item">
+                {{ a.dang_vien.full_name }}<br><small class="text-muted">Lý do: {{ a.ly_do_vang or '-' }}</small>
+              </li>
+              {% endif %}
+            {% endfor %}
+            {% if attendances|selectattr("1", "equalto", none) %}{% endif %}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
