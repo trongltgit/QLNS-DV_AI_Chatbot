@@ -1,15 +1,10 @@
+# app.py
 """
 app.py - Single-file Flask app integrating:
 - Auth (admin + user_demo)
 - RAG upload & chatbot
 - Chi bộ / Đảng viên / Sinh hoạt management (Phương án 2: Đảng viên KHÔNG đăng nhập)
 - SQLAlchemy (Postgres if DATABASE_URL provided, else SQLite for local dev)
-
-Before running on Render:
-- Add environment variables: DATABASE_URL (optional, recommended), FLASK_SECRET, OPENAI_API_KEY (optional)
-- Install dependencies (example):
-  pip install flask sqlalchemy psycopg2-binary Jinja2 python-multipart werkzeug sentence-transformers numpy openai PyPDF2 python-docx openpyxl pandas aiofiles
-  (remove sentence-transformers if you won't use it)
 """
 
 import os
@@ -62,12 +57,10 @@ if OPENAI_AVAILABLE and OPENAI_API_KEY:
 if DATABASE_URL:
     engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 else:
-    # fallback to SQLite local file for dev
     engine = create_engine("sqlite:///./app_dev.db", connect_args={"check_same_thread": False})
 
 SessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 Base = declarative_base()
-
 
 # ========== Models ==========
 class ChiBo(Base):
@@ -83,9 +76,9 @@ class ChiBo(Base):
 class DangVien(Base):
     __tablename__ = "dang_vien"
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String, nullable=True)  # optional mã đảng viên
+    code = Column(String, nullable=True)
     full_name = Column(String, nullable=False)
-    username = Column(String, nullable=True, unique=True)  # optional if you want
+    username = Column(String, nullable=True, unique=True)
     email = Column(String, nullable=True)
     chi_bo_id = Column(Integer, ForeignKey("chi_bo.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -121,35 +114,30 @@ class SinhHoatAttendance(Base):
     dang_vien = relationship("DangVien", back_populates="attendances")
 
 
-# For RAG documents store: store text + embedding bytes
 class RAGDocument(Base):
     __tablename__ = "rag_documents"
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String, nullable=True)
     text = Column(Text, nullable=False)
-    embedding = Column(LargeBinary, nullable=True)  # store numpy array bytes
+    embedding = Column(LargeBinary, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 Base.metadata.create_all(bind=engine)
 
-
-# ========== Simple auth (demo) ==========
-# NOTE: in production use DB users + hashed passwords
+# ========== Simple auth ==========
 USERS = {
     "admin": {"username": "admin", "password": "Test@321", "role": "admin", "full_name": "Administrator"},
     "user_demo": {"username": "user_demo", "password": "Test@123", "role": "user", "full_name": "Người dùng Demo"},
 }
 
-# ========== Embedding model (optional) ==========
+# ========== Embedding model ==========
 EMBED_MODEL = None
 if EMBED_AVAILABLE:
     try:
-        # you can change to a Vietnamese SBERT model if installed
         EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
     except Exception:
         EMBED_MODEL = None
-
 
 # ========== Helpers ==========
 def db_session():
@@ -169,21 +157,13 @@ def extract_text_from_pdf(stream):
         return ""
     try:
         reader = PyPDF2.PdfReader(stream)
-        texts = []
-        for p in reader.pages:
-            t = p.extract_text()
-            if t:
-                texts.append(t)
+        texts = [p.extract_text() for p in reader.pages if p.extract_text()]
         return "\n\n".join(texts)
     except Exception:
         return ""
 
 
 def embed_text(text):
-    """
-    Return numpy embedding. If sentence-transformers available, use it.
-    Otherwise return deterministic pseudo-random vector for retrieval (still works).
-    """
     if EMBED_MODEL:
         v = EMBED_MODEL.encode(text, convert_to_numpy=True)
         return v.astype(np.float32)
@@ -216,9 +196,6 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def llm_answer(prompt, max_tokens=300):
-    """
-    Use OpenAI as fallback. If not configured, return helpful placeholder.
-    """
     if OPENAI_AVAILABLE and OPENAI_API_KEY:
         try:
             resp = openai.ChatCompletion.create(
@@ -232,9 +209,7 @@ def llm_answer(prompt, max_tokens=300):
         except Exception as e:
             return f"[LLM error] {str(e)}"
     else:
-        # graceful non-empty fallback
         return "Xin lỗi, hiện tại bot chưa kết nối tới LLM. (Admin có thể cài OPENAI_API_KEY)."
-
 
 # ========== Routes ==========
 @app.context_processor
@@ -244,35 +219,30 @@ def inject_user():
 
 @app.route("/")
 def root():
-    # if logged in show admin dashboard, else redirect to login
     if session.get("user"):
         return redirect("/admin")
     return redirect("/login")
 
 
-# ---- AUTH ----
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("user"):
         return redirect("/admin")
-    show_demo = True  # always show demo user_demo credential
+    show_demo = True
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = (request.form.get("password") or "").strip()
         user = USERS.get(username)
         if not user:
-            # only user_demo show explicit error; others silent
             if username == "user_demo":
                 flash("Tài khoản không tồn tại.", "danger")
             return render_template("login.html", show_demo=show_demo)
         if password != user["password"]:
             if username == "admin":
-                # silent fail for admin
                 return render_template("login.html", show_demo=show_demo)
             else:
                 flash("Sai tên đăng nhập hoặc mật khẩu.", "danger")
                 return render_template("login.html", show_demo=show_demo)
-        # success
         session["user"] = {"username": user["username"], "role": user["role"], "full_name": user["full_name"]}
         return redirect("/admin")
     return render_template("login.html", show_demo=show_demo)
@@ -284,7 +254,6 @@ def logout():
     return redirect("/login")
 
 
-# ---- Admin dashboard (simple) ----
 @app.route("/admin")
 def admin_index():
     if not session.get("user"):
@@ -297,7 +266,7 @@ def admin_index():
     return render_template("admin_dashboard.html", chibos=chibos, dv_count=dv_count, sh_count=sh_count)
 
 
-# ---- Chi bộ & Đảng viên management (Phương án 2: Đảng viên do admin quản lý) ----
+# ---- Chi bộ & Đảng viên ----
 @app.route("/chi_bo")
 def chi_bo_list():
     if not session.get("user"):
@@ -368,7 +337,7 @@ def dang_vien_create():
     return redirect(request.referrer or "/chi_bo")
 
 
-# ---- Sinh hoạt: list, create, detail, attendance ----
+# ---- Sinh hoạt ----
 @app.route("/chi_bo/<int:chi_bo_id>/sinh_hoat")
 def sinh_hoat_list(chi_bo_id):
     if not session.get("user"):
@@ -401,4 +370,21 @@ def sinh_hoat_create(chi_bo_id):
         flash("Tiêu đề là bắt buộc.", "danger")
         return redirect(f"/chi_bo/{chi_bo_id}/sinh_hoat")
     db = SessionLocal()
-    sh = SinhHoatDang(chi_bo_id=chi_bo_id, ngay_sinh_hoat=ngay, tieu_de=tieu_de, noi_dung=noi
+    sh = SinhHoatDang(
+        chi_bo_id=chi_bo_id,
+        ngay_sinh_hoat=ngay,
+        tieu_de=tieu_de,
+        noi_dung=noi_dung,
+        hinh_thuc=hinh_thuc,
+        ghi_chu=ghi_chu
+    )
+    db.add(sh)
+    db.commit()
+    db.close()
+    flash("Tạo sinh hoạt thành công.", "success")
+    return redirect(f"/chi_bo/{chi_bo_id}/sinh_hoat")
+
+
+if __name__ == "__main__":
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
