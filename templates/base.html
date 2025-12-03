@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="vi">
-
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -12,29 +11,24 @@
 
     <style>
         :root {
-            --red-dang: #C41E3A;
-            --gold-star: #FFD700;
+            --primary-green: #0B6E3B;
+            --accent-green: #3AA14A;
         }
-
         body {
-            font-family: 'Times New Roman', serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: #f8f9fa;
             margin: 0;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
         }
-
-        .header-dang {
-            background: linear-gradient(135deg, #8B0000, var(--red-dang));
-            color: white;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-            padding: 1rem 0;
+        .header-bank {
+            background: white;
+            padding: 12px 0;
+            border-bottom: 1px solid #e9ecef;
         }
-
-        /* ⛔ LOGO ĐÃ ĐƯỢC SỬA — KHÔNG BO TRÒN — HIỂN THỊ ĐẸP */
         .logo-img {
-            height: 70px;
+            height: 64px;
             border: none !important;
             border-radius: 0 !important;
             padding: 0;
@@ -42,117 +36,89 @@
             box-shadow: none !important;
             object-fit: contain;
         }
-
-        .navbar-dang {
-            background: #9B0000;
+        .brand-title {
+            color: var(--primary-green);
+            font-weight: 700;
+            margin: 0;
         }
-
-        .user-info {
-            font-weight: bold;
-            color: var(--gold-star);
+        .brand-sub {
+            color: #7aa675;
+            font-size: 0.9rem;
         }
-
+        .navbar-bank {
+            background: var(--primary-green);
+        }
         footer {
-            background: #333;
-            color: #ddd;
+            background: #f1f3f5;
+            color: #333;
             padding: 1rem 0;
             margin-top: auto;
-        }
-
-        .btn-dang {
-            background: var(--red-dang);
-            color: white;
-        }
-
-        .btn-dang:hover {
-            background: #9B0000;
+            border-top: 1px solid #e9ecef;
         }
     </style>
 </head>
 
 <body>
-
-    <!-- HEADER -->
-    <header class="header-dang">
-        <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap">
-
+    <header class="header-bank">
+        <div class="container d-flex align-items-center justify-content-between">
             <div class="d-flex align-items-center gap-3">
-                <!-- LOGO -->
-                <img src="/static/Logo.png" alt="Logo Đảng" class="logo-img">
-
+                <img src="/static/Logo.png" alt="Logo" class="logo-img">
                 <div>
-                    <h1 class="mb-0 fw-bold">HỆ THỐNG QLNS - ĐẢNG VIÊN</h1>
-                    <small>Chatbot AI & Quản lý Sinh hoạt Đảng</small>
+                    <h2 class="brand-title">HỆ THỐNG QLNS - ĐẢNG VIÊN</h2>
+                    <div class="brand-sub">Chatbot AI & Quản lý Sinh hoạt Đảng</div>
                 </div>
             </div>
 
             {% if user %}
-            <div class="text-end user-info">
-                <i class="fas fa-user"></i>
-                {{ user.full_name|default(user.username) }}
-                <span class="badge bg-warning text-dark ms-2">{{ user.role.upper() }}</span>
-                <a href="/logout" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
+            <div class="text-end">
+                <div class="fw-bold text-success">{{ user.full_name }}</div>
+                <div class="small text-muted">{{ user.role|upper }}</div>
+                <a href="/logout" class="btn btn-outline-secondary btn-sm mt-2">Đăng xuất</a>
             </div>
             {% endif %}
         </div>
     </header>
 
-    <!-- NAVBAR -->
     {% if user %}
-    <nav class="navbar navbar-expand-lg navbar-dang">
-        <div class="container-fluid">
+    <nav class="navbar navbar-expand-lg navbar-bank">
+        <div class="container">
             <div class="collapse navbar-collapse">
-
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
-                        <a class="nav-link text-white" href="/">
-                            <i class="fas fa-robot"></i> Chatbot AI
-                        </a>
+                        <a class="nav-link text-white" href="/chat-ui"><i class="fas fa-robot"></i> Chatbot</a>
                     </li>
-
+                    <li class="nav-item">
+                        <a class="nav-link text-white" href="/upload"><i class="fas fa-file-upload"></i> Upload tài liệu</a>
+                    </li>
                     {% if user.role == 'admin' %}
                     <li class="nav-item">
-                        <a class="nav-link text-white" href="/admin/users">
-                            <i class="fas fa-users-cog"></i> Quản lý người dùng
-                        </a>
-                    </li>
-
-                    {% elif user.role == 'user' %}
-                    <li class="nav-item">
-                        <a class="nav-link text-white" href="/user/profile">
-                            <i class="fas fa-id-card"></i> Hồ sơ cá nhân
-                        </a>
+                        <a class="nav-link text-white" href="/admin/users"><i class="fas fa-users-cog"></i> Quản lý người dùng</a>
                     </li>
                     {% endif %}
                 </ul>
-
             </div>
         </div>
     </nav>
     {% endif %}
 
-    <!-- CONTENT -->
     <main class="container my-4 flex-grow-1">
-
-        {% if error %}
-            <div class="alert alert-danger">{{ error }}</div>
-        {% endif %}
-
-        {% if success %}
-            <div class="alert alert-success">{{ success }}</div>
-        {% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }}">{{
+               message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
 
         {% block content %}{% endblock %}
     </main>
 
-    <!-- FOOTER -->
     <footer class="text-center py-3">
         © 2025 Hệ thống Quản lý Nhân sự & Đảng viên - LTT
     </footer>
 
-    <!-- Script -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     {% block scripts %}{% endblock %}
 </body>
-
 </html>
