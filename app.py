@@ -1,221 +1,316 @@
-# app.py – FIX LỖI 500, THỨ TỰ THAM SỐ ĐÚNG, CHẠY NGON RENDER
-from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import Response
-from openai import OpenAI
-import os, json, hashlib, secrets
-import json as json_lib  # Để lưu DB
+import os
+import json
+import numpy as np
+from flask import Flask, render_template, request, redirect, session, flash, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
 
-from pypdf import PdfReader
-import docx, openpyxl
+# OPTIONAL: If you use sentence-transformers:
+try:
+    from sentence_transformers import SentenceTransformer
+    EMBED_AVAILABLE = True
+except Exception:
+    EMBED_AVAILABLE = False
 
-app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key=secrets.token_urlsafe(32))
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# OPTIONAL: If you use PyPDF2 to read PDF:
+try:
+    import PyPDF2
+    PDF_AVAILABLE = True
+except Exception:
+    PDF_AVAILABLE = False
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+# OPTIONAL: OpenAI for LLM fallback
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except Exception:
+    OPENAI_AVAILABLE = False
 
-CURRENT_CONTEXT = ""
-CURRENT_FILENAME = ""
+# ========== Configuration ==========
+UPLOAD_FOLDER = "uploads"
+ALLOWED_EXT = {"txt", "pdf", "md"}
 
-# Load USERS_DB từ file JSON nếu có (persistent)
-USERS_FILE = "users.json"
-if os.path.exists(USERS_FILE):
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        USERS_DB = json_lib.load(f)
-else:
-    USERS_DB = {
-        "admin": {"password": hashlib.sha256("Test@321".encode()).hexdigest(), "full_name": "Quản trị viên", "role": "admin"},
-        "user_demo": {"password": hashlib.sha256("Test@123".encode()).hexdigest(), "full_name": "Đảng viên Demo", "role": "user"}
+SECRET_KEY = os.environ.get("FLASK_SECRET", "dev-secret-key")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", None)
+
+app = Flask(__name__)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.secret_key = SECRET_KEY
+
+if OPENAI_AVAILABLE and OPENAI_API_KEY:
+    openai.api_key = OPENAI_API_KEY
+
+# ========== Simple demo user store ==========
+# In production use database + hashed passwords.
+USERS = {
+    "admin": {
+        "username": "admin",
+        "password": "Test@321",
+        "role": "admin",
+        "full_name": "Administrator"
+    },
+    "user_demo": {
+        "username": "user_demo",
+        "password": "Test@123",
+        "role": "user",
+        "full_name": "Người dùng Demo"
     }
-    # Lưu mặc định
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json_lib.dump(USERS_DB, f, ensure_ascii=False, indent=2)
+}
 
-def save_users_db():
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json_lib.dump(USERS_DB, f, ensure_ascii=False, indent=2)
+# ========== In-memory RAG store ==========
+DOCUMENTS = []   # list of dicts: {"text": "...", "meta": {...}}
+EMBEDDINGS = [] # list of numpy arrays
 
-def get_current_user(request: Request):
-    return request.session.get("user")
-
-def require_admin(user):
-    if not user or user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Chỉ admin mới được truy cập")
-
-# ====================== RAG FUNCTIONS (GIỮ NGUYÊN) ======================
-def extract_text_from_file(file_path: str, filename: str) -> str:
-    ext = filename.lower().split(".")[-1]
-    text = ""
+# Load embedding model if available
+EMBED_MODEL = None
+if EMBED_AVAILABLE:
+    # Choose model you installed. Replace with a Vietnamese SBERT if desired.
     try:
-        if ext == "txt":
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f: text = f.read()
+        EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    except Exception:
+        EMBED_MODEL = None
+
+# ========== Helpers ==========
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
+
+def embed_text(text):
+    """
+    Return vector embedding for text.
+    Uses sentence-transformers if available; otherwise returns random vector (placeholder).
+    """
+    if EMBED_MODEL:
+        emb = EMBED_MODEL.encode(text, convert_to_numpy=True)
+        return emb
+    else:
+        # placeholder deterministic pseudo-embedding (not for production)
+        rng = np.random.RandomState(abs(hash(text)) % (2**32))
+        return rng.normal(size=(384,))
+
+def cosine_sim(a, b):
+    if a is None or b is None:
+        return -1.0
+    na = np.linalg.norm(a)
+    nb = np.linalg.norm(b)
+    if na == 0 or nb == 0:
+        return -1.0
+    return float(np.dot(a, b) / (na * nb))
+
+def extract_text_from_pdf(stream):
+    if not PDF_AVAILABLE:
+        return ""
+    try:
+        reader = PyPDF2.PdfReader(stream)
+        texts = []
+        for page in reader.pages:
+            txt = page.extract_text()
+            if txt:
+                texts.append(txt)
+        return "\n".join(texts)
+    except Exception:
+        return ""
+
+def llm_answer(prompt, max_tokens=300):
+    """
+    Fallback LLM answer using OpenAI. If OpenAI not configured, returns a placeholder.
+    """
+    if OPENAI_AVAILABLE and OPENAI_API_KEY:
+        try:
+            resp = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role":"system","content":"Bạn là trợ lý hữu ích."},
+                          {"role":"user","content":prompt}],
+                max_tokens=max_tokens,
+                temperature=0.2
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            return f"[LLM error] {str(e)}"
+    else:
+        # fallback placeholder so chatbot never stays silent
+        return "Xin lỗi, hiện tại bot chưa kết nối tới LLM. (Bạn có thể cài đặt OPENAI_API_KEY)."
+
+# ========== Routes ==========
+@app.route("/")
+def index():
+    user = session.get("user")
+    return render_template("index.html", user=user)
+
+# -------- Login/Logout ----------
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    # If already logged in redirect
+    if session.get("user"):
+        return redirect("/")
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+
+        user = USERS.get(username)
+
+        if not user:
+            # If username not found, for security we show same behavior as wrong password
+            # But requirement: only user_demo must show explicit error.
+            if username == "user_demo":
+                flash("Tài khoản không tồn tại.", "danger")
+            # For admin or other usernames do not flash admin-specific info
+            return render_template("login.html", show_demo=True)
+
+        # Found user
+        if password != user["password"]:
+            # Requirement: *If admin* enters wrong password -> do NOT show flash error
+            if username == "admin":
+                # silent fail: re-render login without flashing
+                return render_template("login.html", show_demo=True)
+            else:
+                # For other users (including user_demo) show error
+                flash("Sai tên đăng nhập hoặc mật khẩu.", "danger")
+                return render_template("login.html", show_demo=True)
+
+        # Success login
+        session["user"] = {
+            "username": user["username"],
+            "role": user["role"],
+            "full_name": user["full_name"]
+        }
+        return redirect("/")
+
+    # GET
+    return render_template("login.html", show_demo=True)
+
+@app.route("/logout")
+def logout():
+    session.pop("user", None)
+    return redirect("/login")
+
+# -------- Upload documents to RAG ----------
+@app.route("/upload", methods=["GET", "POST"])
+def upload():
+    user = session.get("user")
+    if not user:
+        return redirect("/login")
+
+    if request.method == "POST":
+        if "file" not in request.files:
+            flash("Không có tệp được gửi.", "danger")
+            return redirect("/upload")
+        f = request.files["file"]
+        if f.filename == "":
+            flash("Không có tệp được chọn.", "danger")
+            return redirect("/upload")
+        if not allowed_file(f.filename):
+            flash("Định dạng tệp không được hỗ trợ.", "danger")
+            return redirect("/upload")
+
+        filename = secure_filename(f.filename)
+        os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+        path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        f.seek(0)
+        f.save(path)
+
+        # Read content
+        ext = filename.rsplit(".", 1)[1].lower()
+        text = ""
+        if ext == "txt" or ext == "md":
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                text = fh.read()
         elif ext == "pdf":
-            reader = PdfReader(file_path)
-            for page in reader.pages: text += (page.extract_text() or "") + "\n"
-        elif ext == "docx":
-            doc = docx.Document(file_path)
-            text = "\n".join([p.text for p in doc.paragraphs])
-        elif ext == "xlsx":
-            wb = openpyxl.load_workbook(file_path, read_only=True)
-            ws = wb.active
-            for row in ws.iter_rows(values_only=True):
-                row_text = [str(c) if c is not None else "" for c in row]
-                text += " | ".join(row_text) + "\n"
-    except Exception as e:
-        text = f"Lỗi đọc file: {e}"
-    return text
+            with open(path, "rb") as fh:
+                text = extract_text_from_pdf(fh) or ""
 
-def split_text_into_chunks(text: str, chunk_size=1000, overlap=100):
-    words = text.split()
-    chunks, i = [], 0
-    while i < len(words):
-        chunk = " ".join(words[i:i + chunk_size])
-        chunks.append(chunk)
-        i += chunk_size - overlap
-    return chunks or [""]
+        if not text:
+            flash("Không thể đọc nội dung tệp hoặc tệp rỗng.", "danger")
+            return redirect("/upload")
 
-def retrieve_relevant_chunks(query: str, chunks: list):
-    if not chunks: return ""
-    query_lower = query.lower()
-    scored = [(sum(1 for w in query_lower.split() if w in c.lower()), c) for c in chunks]
-    scored.sort(reverse=True)
-    return "\n\n".join([c for _, c in scored[:3]])
+        # Optionally split long text into chunks (simple split by paragraphs)
+        chunks = [p.strip() for p in text.split("\n\n") if p.strip()]
+        if not chunks:
+            chunks = [text[:2000]]
 
-# ====================== ROUTES ======================
-@app.get("/")
-async def home(request: Request, user=Depends(get_current_user)):
-    if not user: return RedirectResponse("/login")
-    return templates.TemplateResponse("index.html", {"request": request, "user": user})
+        added = 0
+        for ch in chunks:
+            emb = embed_text(ch)
+            DOCUMENTS.append({"text": ch, "meta": {"filename": filename}})
+            EMBEDDINGS.append(emb)
+            added += 1
 
-@app.get("/login")
-async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+        flash(f"Tải lên thành công: {added} chunk(s) đã được nhúng.", "success")
+        return redirect("/upload")
 
-@app.post("/login")
-async def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
-    hashed = hashlib.sha256(password.encode()).hexdigest()
-    user_data = USERS_DB.get(username)
-    if user_data and user_data["password"] == hashed:
-        request.session["user"] = {"username": username, "full_name": user_data["full_name"], "role": user_data["role"]}
-        return RedirectResponse("/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "error": "Sai tài khoản hoặc mật khẩu!"})
+    return render_template("upload.html", user=user)
 
-@app.get("/logout")
-async def logout(request: Request):
-    request.session.clear()
-    return RedirectResponse("/login")
+# -------- Chat endpoint ----------
+@app.route("/chat", methods=["POST"])
+def chat():
+    user = session.get("user")
+    # If you want anonymous chat allow even without login. Here require login.
+    if not user:
+        return jsonify({"reply": "Bạn cần đăng nhập để sử dụng chatbot."})
 
-@app.get("/user/profile")
-async def user_profile(request: Request, user=Depends(get_current_user)):
-    if not user: return RedirectResponse("/login")
-    return templates.TemplateResponse("user_profile.html", {"request": request, "user": user})
+    data = request.get_json() or {}
+    question = data.get("message", "").strip()
+    if not question:
+        return jsonify({"reply": "Vui lòng nhập câu hỏi."})
 
-# ====================== ADMIN PANEL (FIX COOKIES & THỨ TỰ) ======================
-@app.get("/admin/users")
-async def admin_users(request: Request, user=Depends(get_current_user)):
-    require_admin(user)
-    users_list = [{"username": k, **v} for k, v in USERS_DB.items()]
-    success = request.session.pop("success", None)  # Lấy từ session thay cookies
-    return templates.TemplateResponse("admin_users.html", {"request": request, "user": user, "users": users_list, "success": success})
+    # If no documents uploaded: fallback to LLM
+    if len(DOCUMENTS) == 0 or len(EMBEDDINGS) == 0:
+        fallback = llm_answer(question)
+        return jsonify({"reply": fallback})
 
-@app.post("/admin/users/add")
-async def admin_add_user(
-    username: str = Form(...), full_name: str = Form(...), password: str = Form(...), role: str = Form("user"),
-    request: Request = None, user=Depends(get_current_user)  # ← FIX: Request SAU Form
-):
-    require_admin(user)
-    if username in USERS_DB:
-        request.session["error"] = "Username đã tồn tại!"
-        return RedirectResponse("/admin/users", status_code=302)
-    USERS_DB[username] = {
-        "password": hashlib.sha256(password.encode()).hexdigest(),
-        "full_name": full_name,
-        "role": role
-    }
-    save_users_db()  # Lưu DB
-    request.session["success"] = f"Đã thêm user {username} thành công!"
-    return RedirectResponse("/admin/users", status_code=302)
+    # compute embedding of question
+    q_emb = embed_text(question)
 
-@app.post("/admin/users/delete/{username}")
-async def admin_delete_user(username: str, user=Depends(get_current_user)):
-    require_admin(user)
-    if username in USERS_DB and username != "admin":
-        del USERS_DB[username]
-        save_users_db()
-    request.session["success"] = "Đã xóa user thành công!"
-    return RedirectResponse("/admin/users", status_code=302)
+    # compute similarities
+    sims = [cosine_sim(q_emb, e) for e in EMBEDDINGS]
+    # find top-k
+    k = 3
+    idxs = np.argsort(sims)[-k:][::-1].tolist()
+    top_sims = [(i, sims[i]) for i in idxs]
 
-@app.post("/admin/users/reset/{username}")
-async def admin_reset_pass(username: str, user=Depends(get_current_user)):
-    require_admin(user)
-    if username in USERS_DB:
-        USERS_DB[username]["password"] = hashlib.sha256("123456".encode()).hexdigest()
-        save_users_db()
-    request.session["success"] = "Đã reset mật khẩu về 123456!"
-    return RedirectResponse("/admin/users", status_code=302)
+    # pick best context if above threshold
+    best_idx, best_score = top_sims[0]
+    THRESH = 0.45  # tune this threshold
+    if best_score >= THRESH:
+        # gather top contexts
+        contexts = []
+        for i, s in top_sims:
+            contexts.append(f"(score={s:.3f}) {DOCUMENTS[i]['text'][:1500]}")  # truncate for prompt
+        context_text = "\n\n---\n\n".join(contexts)
 
-# ====================== UPLOAD & CHAT (FIX "NO FILE") ======================
-@app.post("/upload")
-async def upload(file: UploadFile = File(...), user=Depends(get_current_user)):
-    if not user: return JSONResponse({"error": "Chưa đăng nhập"}, status_code=401)
-    global CURRENT_CONTEXT, CURRENT_FILENAME
-    filename = file.filename
-    if not filename or filename == "":
-        return JSONResponse({"error": "Không có file được chọn! Vui lòng chọn file PDF/DOCX/TXT/XLSX."}, status_code=400)
-    save_path = f"static/{filename}"
-    os.makedirs("static", exist_ok=True)
-    content = await file.read()
-    with open(save_path, "wb") as f: f.write(content)
-    
-    text = extract_text_from_file(save_path, filename)
-    if len(text.strip()) < 50:
-        return JSONResponse({"error": "File rỗng hoặc không đọc được nội dung"}, status_code=400)
-    
-    try:
-        summary = client.chat.completions.create(model="gpt-4o-mini", messages=[
-            {"role": "system", "content": "Tóm tắt ngắn gọn bằng tiếng Việt, dưới 150 từ."},
-            {"role": "user", "content": text[:8000]}
-        ], temperature=0.3).choices[0].message.content
-    except Exception as e:
-        summary = f"Lỗi API: {str(e)[:100]}"
-    
-    CURRENT_CONTEXT, CURRENT_FILENAME = text, filename
-    return JSONResponse({"filename": filename, "summary": summary})
+        prompt = f"""
+Bạn là trợ lý (chatbot) trả lời bằng tiếng Việt.
+Sử dụng NGAY và CHỈ những thông tin liên quan trong phần "Tài liệu" nếu có thể.
+Nếu Tài liệu không đủ thì có thể bổ sung bằng kiến thức ngoài tài liệu.
+Trả lời thật ngắn gọn, dễ hiểu, và trích dẫn (tên file trong uploads) nếu liên quan.
 
-@app.post("/chat")
-async def chat(prompt: str = Form(""), history: str = Form("[]"), user=Depends(get_current_user)):
-    if not user: return JSONResponse({"error": "Chưa đăng nhập"}, status_code=401)
-    global CURRENT_CONTEXT
-    try: history_list = json_lib.loads(history)
-    except: history_list = []
-    
-    messages = [{"role": "system", "content": "Bạn là trợ lý AI của Đảng Cộng sản Việt Nam. Trả lời trang trọng, chính xác, bằng tiếng Việt."}]
-    if CURRENT_CONTEXT:
-        chunks = split_text_into_chunks(CURRENT_CONTEXT)
-        relevant = retrieve_relevant_chunks(prompt, chunks)
-        if relevant:
-            messages.append({"role": "system", "content": f"Dựa vào tài liệu:\n{relevant}"})
-    
-    messages.extend(history_list)
-    if prompt.strip():
-        messages.append({"role": "user", "content": prompt})
-    
-    try:
-        resp = client.chat.completions.create(model="gpt-4o-mini", messages=messages, temperature=0.7)
-        answer = resp.choices[0].message.content
-    except Exception as e:
-        answer = f"Lỗi kết nối OpenAI: {str(e)}"
-    
-    new_history = [m for m in messages if m["role"] != "system"]
-    return JSONResponse({"response": answer, "updated_history": json_lib.dumps(new_history, ensure_ascii=False)})
+Tài liệu:
+{context_text}
 
+Câu hỏi:
+{question}
+
+Yêu cầu: nếu dùng tài liệu hãy bắt đầu câu trả lời bằng "[Tài liệu]" - nếu không, bắt đầu bằng "[Ngoài tài liệu]".
+"""
+        answer = llm_answer(prompt)
+        return jsonify({"reply": answer})
+    else:
+        # fallback to LLM
+        fallback = llm_answer(question)
+        return jsonify({"reply": fallback})
+
+# -------- Simple page to view chat UI ----------
+@app.route("/chat-ui")
+def chat_ui():
+    user = session.get("user")
+    if not user:
+        return redirect("/login")
+    return render_template("chat.html", user=user)
+
+# Serve uploads (optional)
+@app.route('/uploads/<path:filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# ========== Run ==========
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+    app.run(debug=True, host="0.0.0.0", port=5000)
