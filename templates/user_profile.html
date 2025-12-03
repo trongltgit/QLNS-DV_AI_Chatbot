@@ -1,15 +1,89 @@
 {% extends "base.html" %}
 {% block title %}Hồ sơ cá nhân{% endblock %}
+
 {% block content %}
-<div class="card shadow-lg border-0">
-  <div class="card-header bg-danger text-white">
-    <h4><i class="fas fa-id-card"></i> HỒ SƠ CÁ NHÂN</h4>
+<div class="container py-4">
+
+  <div class="card shadow border-0 mb-4">
+    <div class="card-header bg-primary text-white">
+      <h4 class="mb-0"><i class="fas fa-user-circle"></i> Hồ sơ cá nhân</h4>
+    </div>
+    <div class="card-body">
+      <p><strong>Họ và tên:</strong> {{ user.full_name }}</p>
+      <p><strong>Tên đăng nhập:</strong> {{ user.username }}</p>
+      <p><strong>Vai trò:</strong> {{ user.role }}</p>
+      <p><strong>Chi bộ:</strong> {{ user.chi_bo.name if user.chi_bo else 'Chưa được phân vào chi bộ' }}</p>
+    </div>
   </div>
-  <div class="card-body text-center">
-    <h5>{{ user.full_name }}</h5>
-    <p><strong>Username:</strong> {{ user.username }}</p>
-    <p><strong>Quyền:</strong> <span class="badge bg-warning text-dark">{{ user.role.upper() }}</span></p>
-    <a href="/" class="btn btn-dang">Quay lại Chatbot</a>
+
+  <div class="card shadow border-0">
+    <div class="card-header bg-secondary text-white">
+      <h5 class="mb-0"><i class="fas fa-history"></i> Lịch sử tham gia sinh hoạt</h5>
+    </div>
+    <div class="card-body">
+
+      <div id="history-loading" class="text-center py-4">
+        <div class="spinner-border"></div>
+        <p class="mt-2 text-muted">Đang tải dữ liệu...</p>
+      </div>
+
+      <div class="table-responsive d-none" id="history-table-box">
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>Buổi sinh hoạt</th>
+              <th>Ngày</th>
+              <th>Trạng thái</th>
+              <th>Lý do vắng</th>
+            </tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+
+    </div>
   </div>
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    fetch("/api/dang_vien_history_by_username?username={{ user.username }}")
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("history-loading").classList.add("d-none");
+
+            const box = document.getElementById("history-table-box");
+            box.classList.remove("d-none");
+
+            const body = document.getElementById("history-body");
+            body.innerHTML = "";
+
+            if (data.length === 0) {
+                body.innerHTML = `<tr><td colspan="4" class="text-center text-muted">Chưa có dữ liệu sinh hoạt</td></tr>`;
+                return;
+            }
+
+            data.forEach(item => {
+                body.innerHTML += `
+                    <tr>
+                      <td>${item.tieu_de}</td>
+                      <td>${item.ngay}</td>
+                      <td>
+                        ${item.co_mat
+                          ? '<span class="badge bg-success">Có mặt</span>'
+                          : '<span class="badge bg-danger">Vắng</span>'}
+                      </td>
+                      <td>${item.ly_do_vang || ''}</td>
+                    </tr>
+                `;
+            });
+        })
+        .catch(err => {
+            console.error(err);
+            document.getElementById("history-loading").innerHTML =
+                `<p class="text-danger">Không thể tải dữ liệu.</p>`;
+        });
+});
+</script>
+
 {% endblock %}
