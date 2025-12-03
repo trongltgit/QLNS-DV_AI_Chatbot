@@ -4,6 +4,11 @@ psycopg2-binary>=2.9
 Jinja2>=3.1
 python-multipart>=0.0.6
 Werkzeug>=2.3
-numpy<1.26,>=1.25
+numpy
 openai>=1.7
-PyPDF2<3.1
+PyPDF2>=2.12,<3.1
+python-docx>=0.8.12
+openpyxl>=3.1
+pandas==2.0.3  # Đã cố định để tránh lỗi build dependency
+aiofiles>=23.1
+sentence-transformers>=2.2
