@@ -1,0 +1,86 @@
+{# templates/dang_vien.html
+   Yêu cầu backend: render_template("dang_vien_list.html", chi=chi, members=members, chibos=chibos)
+   - chi: thông tin chi bộ (nếu xem theo chi bộ)
+   - members: list DangVien
+   - chibos: list ChiBo (dùng khi admin muốn gán chi bộ)
+#}
+{% extends "base.html" %}
+{% block title %}Danh sách Đảng viên{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3><i class="fas fa-user-friends"></i> Danh sách Đảng viên {% if chi %} — {{ chi.name }} {% endif %}</h3>
+    {% if user and user.role in ['admin'] %}
+    <button class="btn btn-success" data-bs-toggle="collapse" data-bs-target="#createDvBox">+ Thêm Đảng viên</button>
+    {% endif %}
+  </div>
+
+  {% if user and user.role in ['admin'] %}
+  <div id="createDvBox" class="collapse mb-3">
+    <div class="card card-body">
+      <form method="post" action="/dang_vien/create" class="row g-2 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label small">Họ và tên</label>
+          <input name="full_name" class="form-control" placeholder="Họ tên" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small">Email</label>
+          <input name="email" class="form-control" placeholder="Email">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small">Gán chi bộ</label>
+          <select name="chi_bo_id" class="form-select">
+            <option value="">— Chọn —</option>
+            {% for c in chibos %}
+            <option value="{{ c.id }}" {% if chi and chi.id == c.id %}selected{% endif %}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-primary w-100">Thêm</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Họ tên</th>
+              <th>Email</th>
+              <th>Chi bộ</th>
+              <th>Hành động</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in members %}
+            <tr>
+              <td>{{ loop.index }}</td>
+              <td>{{ m.full_name }}</td>
+              <td>{{ m.email or '-' }}</td>
+              <td>{{ m.chi_bo.name if m.chi_bo else '-' }}</td>
+              <td>
+                <a href="/dang_vien/{{ m.id }}" class="btn btn-sm btn-outline-secondary">Chi tiết</a>
+                {% if user and user.role == 'admin' %}
+                <form method="post" action="/dang_vien/{{ m.id }}/delete" class="d-inline" onsubmit="return confirm('Xác nhận xoá?');">
+                  <button class="btn btn-sm btn-danger">Xoá</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-center text-muted">Chưa có đảng viên nào.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
