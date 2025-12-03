@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -31,13 +32,15 @@
             padding: 1rem 0;
         }
 
+        /* ⛔ LOGO ĐÃ ĐƯỢC SỬA — KHÔNG BO TRÒN — HIỂN THỊ ĐẸP */
         .logo-img {
-            height: 90px;
+            height: 70px;
             border: none !important;
-            border-radius: 50%;
+            border-radius: 0 !important;
             padding: 0;
             background: transparent;
             box-shadow: none !important;
+            object-fit: contain;
         }
 
         .navbar-dang {
@@ -72,7 +75,9 @@
     <!-- HEADER -->
     <header class="header-dang">
         <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap">
+
             <div class="d-flex align-items-center gap-3">
+                <!-- LOGO -->
                 <img src="/static/Logo.png" alt="Logo Đảng" class="logo-img">
 
                 <div>
@@ -149,4 +154,5 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     {% block scripts %}{% endblock %}
 </body>
+
 </html>
