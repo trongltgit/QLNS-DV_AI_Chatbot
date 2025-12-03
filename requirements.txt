@@ -1,28 +1,14 @@
-fastapi
-uvicorn[standard]
-jinja2
-python-multipart
-
-# AI + Chat + Embedding
-openai>=1.0.0
-tiktoken
-sentence-transformers
-
-# Vector DB cho RAG
-chromadb
-
-# Xử lý file
-pypdf
-python-docx
-openpyxl
-pandas
-aiofiles
-PyMuPDF
-
-# Bảo mật + utils
-itsdangerous
-python-dotenv
-typing_extensions
-
-# Web framework
-starlette
+Flask>=2.3.3
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+Jinja2>=3.1
+python-multipart>=0.0.6
+Werkzeug>=2.3
+numpy>=1.26
+openai>=1.7
+PyPDF2>=3.1
+python-docx>=0.8.12
+openpyxl>=3.1
+pandas>=2.1
+aiofiles>=23.1
+sentence-transformers>=2.2
