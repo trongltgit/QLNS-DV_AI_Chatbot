@@ -2,9 +2,27 @@ fastapi
 uvicorn[standard]
 jinja2
 python-multipart
-openai
+
+# AI + Chat + Embedding
+openai>=1.0.0
+tiktoken
+sentence-transformers
+
+# Vector DB cho RAG
+chromadb
+
+# Xử lý file
 pypdf
 python-docx
 openpyxl
+pandas
+aiofiles
+PyMuPDF
+
+# Bảo mật + utils
 itsdangerous
+python-dotenv
+typing_extensions
+
+# Web framework
 starlette
