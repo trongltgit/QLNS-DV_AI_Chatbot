@@ -1,6 +1,11 @@
 services:
   - type: web
-    name: my-fastapi-app
+    name: dangbo-app
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m uvicorn app:app --host 0.0.0.0 --port 10000
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    envVars:
+      - key: DISABLE_EMBEDDING
+        value: 1
+      - key: PYTHONUNBUFFERED
+        value: true
