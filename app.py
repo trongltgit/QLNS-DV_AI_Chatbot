@@ -1,40 +1,37 @@
-from flask import Flask, render_template_string, request, redirect, session, flash
+from flask import Flask, render_template_string, request, redirect, session, flash, send_from_directory
 from functools import wraps
-import os, uuid
+import os
+import secrets
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev_secret_key")
 
-# ==============================
-# TỰ ĐỘNG TẠO FOLDER UPLOAD
-# ==============================
-UPLOAD_FOLDER = "uploads"
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+# SECRET KEY
+app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 
-# ==============================
-# FAKE DATABASE DEMO
-# ==============================
+# =============================
+# FAKE DATABASE
+# =============================
 USERS = {
     "admin": {"password": "Test@321", "role": "admin", "name": "Quản trị viên"},
-    "user_demo": {"password": "Test@123", "role": "dang_vien", "name": "User Demo"},
     "cb1": {"password": "Test@123", "role": "chi_bo", "name": "Chi bộ 1"},
     "dv1": {"password": "Test@123", "role": "dang_vien", "name": "Đảng viên 1"},
+    "user_demo": {"password": "Test@123", "role": "dang_vien", "name": "User Demo"},
 }
 
-# Chi bộ notifications & activities
-chi_bo_notifications = {}
-chi_bo_activities = {}
+# =============================
+# SESSION DATA
+# =============================
+DOCS = {}  # {filename: {"summary": "tóm tắt", "uploader": username}}
+CHAT_HISTORY = {}  # {username: [{"question":"", "answer":""}, ...]}
+SINH_HOAT = {}  # {chi_bo: [{"title": "...", "content": "..."}]}
 
-# Upload files & summaries
-documents = {}  # filename -> summary
+# Upload folder
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Chat history per user session
-chat_histories = {}  # username -> list of (question, answer)
-
-# ==============================
+# =============================
 # LOGIN REQUIRED DECORATOR
-# ==============================
+# =============================
 def login_required(role=None):
     def wrapper(fn):
         @wraps(fn)
@@ -48,24 +45,53 @@ def login_required(role=None):
         return decorated
     return wrapper
 
-# ==============================
-# LOGIN / LOGOUT
-# ==============================
-@app.route("/", methods=["GET"])
+# =============================
+# COMMON HEADER & FOOTER
+# =============================
+def render_page(content_html, title="HỆ THỐNG QLNS - ĐẢNG VIÊN"):
+    page = f"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>{title}</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="d-flex flex-column min-vh-100">
+      <header class="bg-light py-3 shadow">
+        <div class="container d-flex align-items-center">
+          <img src="/static/Logo.png" alt="Logo" height="50" class="me-3">
+          <h4 class="mb-0">{title}</h4>
+        </div>
+      </header>
+      <div class="container py-4 flex-fill">
+        {content_html}
+      </div>
+      <footer class="bg-light text-center py-3 mt-auto">
+        <div class="container">&copy; 2025 HỆ THỐNG QLNS - ĐẢNG VIÊN | Toàn bộ quyền được bảo lưu</div>
+      </footer>
+      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+    </html>
+    """
+    return page
+
+# =============================
+# ROUTES
+# =============================
+@app.route("/")
 def index():
     return redirect("/login")
 
+# ----- LOGIN -----
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method=="POST":
         username = request.form.get("username")
         pw = request.form.get("password")
         if username in USERS and USERS[username]["password"]==pw:
-            session["user"] = {
-                "username": username,
-                "role": USERS[username]["role"],
-                "name": USERS[username]["name"]
-            }
+            session["user"] = {"username": username, "role": USERS[username]["role"], "name": USERS[username]["name"]}
             role = USERS[username]["role"]
             if role=="admin":
                 return redirect("/admin")
@@ -73,259 +99,232 @@ def login():
                 return redirect("/chi_bo")
             else:
                 return redirect("/dang_vien")
-        flash("Sai tài khoản hoặc mật khẩu!", "danger")
-
-    login_html = """
-    <!DOCTYPE html>
-    <html lang="vi">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Đăng nhập</title>
-      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    </head>
-    <body class="bg-light">
-      <div class="container d-flex align-items-center justify-content-center" style="min-height:100vh;">
-        <div class="card p-4 shadow" style="max-width:400px;width:100%;">
-          <h3 class="text-center mb-3 text-success">Đăng nhập hệ thống</h3>
-          {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-              {% for category,msg in messages %}
-                <div class="alert alert-{{category}} alert-dismissible fade show" role="alert">
-                  {{msg}}
-                  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-              {% endfor %}
-            {% endif %}
-          {% endwith %}
-          <form method="post">
-            <label class="form-label">Tài khoản</label>
-            <input type="text" class="form-control" name="username" required>
-            <label class="form-label mt-3">Mật khẩu</label>
-            <input type="password" class="form-control" name="password" required>
-            <button class="btn btn-success w-100 mt-4">Đăng nhập</button>
-          </form>
-        </div>
-      </div>
-      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    </body>
-    </html>
+        flash("Sai tài khoản hoặc mật khẩu!","danger")
+    login_html="""
+    <div class="card p-4 shadow mx-auto" style="max-width:400px;">
+      <h3 class="text-center mb-3 text-success">Đăng nhập hệ thống</h3>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for cat,msg in messages %}
+          <div class="alert alert-{{cat}} alert-dismissible fade show">{{msg}}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+        {% endfor %}{% endif %}
+      {% endwith %}
+      <form method="post">
+        <label class="form-label">Tài khoản</label>
+        <input type="text" class="form-control" name="username" required>
+        <label class="form-label mt-3">Mật khẩu</label>
+        <input type="password" class="form-control" name="password" required>
+        <button class="btn btn-success w-100 mt-4">Đăng nhập</button>
+      </form>
+    </div>
     """
-    return render_template_string(login_html)
+    return render_template_string(render_page(login_html, title="Đăng nhập"))
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect("/login")
 
-# ==============================
-# DASHBOARD
-# ==============================
+# ----- DASHBOARD -----
 @app.route("/dashboard")
 @login_required()
 def dashboard():
-    dashboard_html = """
-    <!DOCTYPE html>
-    <html lang="vi">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Dashboard</title>
-      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    </head>
-    <body class="d-flex flex-column min-vh-100">
-      <header class="bg-light py-3 shadow">
-        <div class="container d-flex align-items-center">
-          <img src="/static/Logo.png" alt="Logo" height="50" class="me-3">
-          <h4 class="mb-0">HỆ THỐNG QLNS - ĐẢNG VIÊN</h4>
-        </div>
-      </header>
-      <div class="container py-5">
-        <h3>Xin chào, {{ session.user.name }} ({{ session.user.role }})</h3>
-        <a href="/logout" class="btn btn-danger mt-3">Đăng xuất</a>
-      </div>
-      <footer class="bg-light text-center py-3 mt-auto">
-        <div class="container">&copy; 2025 HỆ THỐNG QLNS - ĐẢNG VIÊN | Toàn bộ quyền được bảo lưu</div>
-      </footer>
-    </body>
-    </html>
+    html=f"""
+    <h3>Xin chào, {{ session.user.name }}</h3>
+    <p>Role: {{ session.user.role }}</p>
+    <a href="/logout" class="btn btn-danger mt-3">Đăng xuất</a>
     """
-    return render_template_string(dashboard_html)
+    return render_template_string(render_page(html))
 
-# ==============================
-# ADMIN ROUTES
-# ==============================
+# =============================
+# ADMIN
+# =============================
 @app.route("/admin")
 @login_required("admin")
 def admin_home():
     return redirect("/admin/users")
 
-@app.route("/admin/users", methods=["GET","POST"])
+@app.route("/admin/users")
 @login_required("admin")
 def admin_users():
-    admin_html = """
-    <!DOCTYPE html>
-    <html lang="vi">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Admin - Users</title>
-      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    </head>
-    <body class="d-flex flex-column min-vh-100">
-      <header class="bg-light py-3 shadow">
-        <div class="container d-flex align-items-center">
-          <img src="/static/Logo.png" alt="Logo" height="50" class="me-3">
-          <h4 class="mb-0">HỆ THỐNG QLNS - ĐẢNG VIÊN</h4>
-        </div>
-      </header>
-      <div class="container py-5">
-        <h3>Quản lý người dùng</h3>
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-              {% for category,msg in messages %}
-                <div class="alert alert-{{category}} alert-dismissible fade show" role="alert">
-                  {{msg}}
-                  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-              {% endfor %}
+    html="""
+    <h3>Quản lý người dùng</h3>
+    <table class="table table-striped mt-3">
+      <thead><tr><th>ID</th><th>Tên</th><th>Role</th><th>Hành động</th></tr></thead>
+      <tbody>
+      {% for username,u in users.items() %}
+        <tr>
+          <td>{{username}}</td>
+          <td>{{u.name}}</td>
+          <td>{{u.role}}</td>
+          <td>
+            {% if username != "admin" and username!="user_demo" %}
+              <a href="/admin/reset/{{username}}" class="btn btn-sm btn-warning">Reset Pass</a>
             {% endif %}
-        {% endwith %}
-
-        <table class="table table-striped mt-3">
-          <thead><tr><th>ID</th><th>Tên</th><th>Role</th><th>Hành động</th></tr></thead>
-          <tbody>
-            {% for username,u in users.items() %}
-            <tr>
-              <td>{{username}}</td>
-              <td>{{u.name}}</td>
-              <td>{{u.role}}</td>
-              <td>
-                {% if username not in ['admin','user_demo'] %}
-                <a href="/admin/users/reset/{{username}}" class="btn btn-sm btn-warning">Reset Pass</a>
-                <a href="/admin/users/delete/{{username}}" class="btn btn-sm btn-danger">Xóa</a>
-                {% else %}
-                <span class="text-muted">Không đổi</span>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      <footer class="bg-light text-center py-3 mt-auto">
-        <div class="container">&copy; 2025 HỆ THỐNG QLNS - ĐẢNG VIÊN | Toàn bộ quyền được bảo lưu</div>
-      </footer>
-    </body>
-    </html>
+            <a href="/admin/users/delete/{{username}}" class="btn btn-sm btn-danger">Xóa</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
     """
-    return render_template_string(admin_html, users=USERS)
+    return render_template_string(render_page(html), users=USERS)
 
 @app.route("/admin/users/delete/<username>")
 @login_required("admin")
 def admin_delete_user(username):
     if username in USERS and username not in ["admin","user_demo"]:
         del USERS[username]
-        flash("Đã xóa người dùng!", "success")
+        flash("Đã xóa user","success")
     else:
-        flash("Không thể xóa user này!", "danger")
+        flash("Không thể xóa user đặc biệt","danger")
     return redirect("/admin/users")
 
-@app.route("/admin/users/reset/<username>")
+@app.route("/admin/reset/<username>")
 @login_required("admin")
 def admin_reset_user(username):
     if username in USERS and username not in ["admin","user_demo"]:
-        USERS[username]["password"] = "Test@123"
-        flash(f"Đã reset password {username} về Test@123", "success")
+        USERS[username]["password"]="Test@123"
+        flash(f"Đã reset mật khẩu user {username} về Test@123","success")
     else:
-        flash("Không thể reset user này!", "danger")
+        flash("Không thể reset user đặc biệt","danger")
     return redirect("/admin/users")
 
-# ==============================
-# Chatbot & Upload demo
-# ==============================
-def summarize_file(filepath):
-    # Demo summary: chỉ lấy tên file và loại
-    return f"Tóm tắt nội dung file: {os.path.basename(filepath)}"
+# =============================
+# CHI BỘ
+# =============================
+@app.route("/chi_bo")
+@login_required("chi_bo")
+def chi_bo_home():
+    cb = session["user"]["username"]
+    sinh_hoat = SINH_HOAT.get(cb,[])
+    html="""
+    <h3>Xin chào, {{ session.user.name }} (Chi bộ)</h3>
+    <h5>Thông báo sinh hoạt đảng</h5>
+    <ul>
+      {% for s in sinh_hoat %}<li><strong>{{s.title}}</strong>: {{s.content}}</li>{% endfor %}
+    </ul>
+    <a href="/chi_bo/add" class="btn btn-primary mt-2">Thêm thông báo/hoạt động</a>
+    <a href="/logout" class="btn btn-danger mt-2">Đăng xuất</a>
+    """
+    return render_template_string(render_page(html), sinh_hoat=sinh_hoat)
 
-def chatbot_reply(session_id, question):
-    # Demo reply: tìm keyword trong documents
-    reply = "Mình chưa rõ câu hỏi, bạn có thể hỏi khác?"
-    for fname, summary in documents.items():
-        if any(w.lower() in question.lower() for w in fname.split("_")):
-            reply = f"Nội dung tóm tắt {fname}: {summary}"
-    return reply
+@app.route("/chi_bo/add", methods=["GET","POST"])
+@login_required("chi_bo")
+def chi_bo_add():
+    cb = session["user"]["username"]
+    if request.method=="POST":
+        title = request.form.get("title")
+        content = request.form.get("content")
+        SINH_HOAT.setdefault(cb,[]).append({"title":title,"content":content})
+        flash("Đã thêm thông báo/hoạt động","success")
+        return redirect("/chi_bo")
+    html="""
+    <h3>Thêm thông báo/hoạt động</h3>
+    <form method="post">
+      <label class="form-label">Tiêu đề</label><input class="form-control" name="title" required>
+      <label class="form-label mt-2">Nội dung</label><textarea class="form-control" name="content" required></textarea>
+      <button class="btn btn-success mt-3">Thêm</button>
+    </form>
+    <a href="/chi_bo" class="btn btn-secondary mt-3">Quay lại</a>
+    """
+    return render_template_string(render_page(html))
 
-@app.route("/upload", methods=["GET","POST"])
-@login_required()
+# =============================
+# ĐẢNG VIÊN
+# =============================
+@app.route("/dang_vien")
+@login_required("dang_vien")
+def dang_vien_home():
+    username = session["user"]["username"]
+    html="""
+    <h3>Xin chào, {{ session.user.name }} (Đảng viên)</h3>
+    <h5>Hoạt động cá nhân và liên quan</h5>
+    <ul>
+      {% for cb,slist in sinh_hoat.items() %}
+        {% for s in slist %}
+          <li><strong>{{s.title}}</strong>: {{s.content}}</li>
+        {% endfor %}
+      {% endfor %}
+    </ul>
+    <a href="/dang_vien/upload" class="btn btn-primary mt-2">Upload tài liệu</a>
+    <a href="/dang_vien/chatbot" class="btn btn-info mt-2">Chatbot tra cứu tài liệu</a>
+    <a href="/logout" class="btn btn-danger mt-2">Đăng xuất</a>
+    """
+    return render_template_string(render_page(html), sinh_hoat=SINH_HOAT)
+
+# =============================
+# UPLOAD TÀI LIỆU
+# =============================
+ALLOWED_EXT = {"pdf","docx","xlsx","csv"}
+@app.route("/dang_vien/upload", methods=["GET","POST"])
+@login_required("dang_vien")
 def upload_file():
-    session_id = session["user"]["username"]
-    if session_id not in chat_histories:
-        chat_histories[session_id] = []
-
+    username = session["user"]["username"]
     if request.method=="POST":
         f = request.files.get("file")
-        if f:
-            filename = str(uuid.uuid4())+"_"+f.filename
-            filepath = os.path.join(UPLOAD_FOLDER, filename)
+        if f and f.filename.split(".")[-1].lower() in ALLOWED_EXT:
+            filepath = os.path.join(UPLOAD_FOLDER,f.filename)
             f.save(filepath)
-            summary = summarize_file(filepath)
-            documents[filename] = summary
-            flash("Upload thành công!", "success")
-            flash(summary, "info")
-    upload_html = """
-    <!DOCTYPE html>
-    <html lang="vi">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Upload & Chatbot</title>
-      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    </head>
-    <body class="d-flex flex-column min-vh-100">
-      <header class="bg-light py-3 shadow">
-        <div class="container d-flex align-items-center">
-          <img src="/static/Logo.png" alt="Logo" height="50" class="me-3">
-          <h4 class="mb-0">HỆ THỐNG QLNS - ĐẢNG VIÊN</h4>
-        </div>
-      </header>
-      <div class="container py-5">
-        <h3>Upload tài liệu</h3>
-        <form method="post" enctype="multipart/form-data">
-          <input type="file" name="file" class="form-control mb-2">
-          <button class="btn btn-primary">Upload</button>
-        </form>
-        <h3 class="mt-4">Chatbot hỏi về tài liệu</h3>
-        <form method="post" action="/chat">
-          <input type="text" name="question" class="form-control mb-2" placeholder="Nhập câu hỏi">
-          <button class="btn btn-success">Hỏi Chatbot</button>
-        </form>
-        <h4 class="mt-4">Lịch sử hỏi đáp</h4>
-        <ul>
-        {% for q,a in chats %}
-          <li><b>Câu hỏi:</b> {{ q }} <br> <b>Trả lời:</b> {{ a }}</li>
-        {% endfor %}
-        </ul>
-      </div>
-      <footer class="bg-light text-center py-3 mt-auto">
-        <div class="container">&copy; 2025 HỆ THỐNG QLNS - ĐẢNG VIÊN | Toàn bộ quyền được bảo lưu</div>
-      </footer>
-    </body>
-    </html>
+            # Giả lập tóm tắt
+            DOCS[f.filename]={"summary":f"Tóm tắt nội dung của {f.filename}", "uploader":username}
+            flash("Upload thành công và đã tóm tắt nội dung","success")
+        else:
+            flash("File không hợp lệ","danger")
+    html="""
+    <h3>Upload tài liệu</h3>
+    <form method="post" enctype="multipart/form-data">
+      <input type="file" name="file" class="form-control" required>
+      <button class="btn btn-success mt-2">Upload</button>
+    </form>
+    <h5 class="mt-3">Danh sách tài liệu</h5>
+    <ul>
+      {% for fname, info in docs.items() %}
+        <li>{{fname}} - {{info.summary}}</li>
+      {% endfor %}
+    </ul>
+    <a href="/dang_vien" class="btn btn-secondary mt-3">Quay lại</a>
     """
-    return render_template_string(upload_html, chats=chat_histories[session_id])
+    return render_template_string(render_page(html), docs=DOCS)
 
-@app.route("/chat", methods=["POST"])
-@login_required()
-def chat():
-    session_id = session["user"]["username"]
-    question = request.form.get("question")
-    answer = chatbot_reply(session_id, question)
-    chat_histories[session_id].append((question, answer))
-    return redirect("/upload")
+# =============================
+# CHATBOT
+# =============================
+@app.route("/dang_vien/chatbot", methods=["GET","POST"])
+@login_required("dang_vien")
+def chatbot():
+    username = session["user"]["username"]
+    CHAT_HISTORY.setdefault(username, [])
+    answer=""
+    if request.method=="POST":
+        question = request.form.get("question")
+        # Giả lập trả lời từ tóm tắt docs
+        answer_list=[]
+        for fname,info in DOCS.items():
+            if question.lower() in info["summary"].lower():
+                answer_list.append(f"{fname}: {info['summary']}")
+        if answer_list:
+            answer = " | ".join(answer_list)
+        else:
+            answer = "Không tìm thấy thông tin liên quan"
+        CHAT_HISTORY[username].append({"question":question,"answer":answer})
+    html="""
+    <h3>Chatbot tra cứu tài liệu</h3>
+    <form method="post">
+      <input class="form-control" name="question" placeholder="Nhập câu hỏi..." required>
+      <button class="btn btn-info mt-2">Hỏi</button>
+    </form>
+    <h5 class="mt-3">Lịch sử hỏi đáp</h5>
+    <ul>
+      {% for q in history %}
+        <li><strong>Câu hỏi:</strong> {{q.question}} <br> <strong>Trả lời:</strong> {{q.answer}}</li>
+      {% endfor %}
+    </ul>
+    <a href="/dang_vien" class="btn btn-secondary mt-3">Quay lại</a>
+    """
+    return render_template_string(render_page(html), history=CHAT_HISTORY[username])
 
-# ==============================
-# RUN
-# ==============================
+# =============================
+# RUN LOCAL
+# =============================
 if __name__=="__main__":
     app.run(debug=True)
