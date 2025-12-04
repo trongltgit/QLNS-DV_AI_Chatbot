@@ -1,12 +1,14 @@
-from flask import Flask, request, redirect, session, url_for, flash, render_template_string
+from flask import Flask, render_template_string, request, redirect, session, flash
 from functools import wraps
 import os
 
 app = Flask(__name__)
+
+# SECRET KEY từ environment variable trên Render
 app.secret_key = os.environ.get("SECRET_KEY", "dev_secret_key")
 
 # =============================
-# USERS DEMO (Bạn có thể thay, thêm, xoá)
+#  FAKE DATABASE DEMO
 # =============================
 USERS = {
     "admin": {"password": "Test@321", "role": "admin", "name": "Quản trị viên"},
@@ -14,116 +16,9 @@ USERS = {
     "dv1": {"password": "Test@123", "role": "dang_vien", "name": "Đảng viên 1"},
 }
 
-# =============================
-# HTML TEMPLATES INLINE
-# =============================
-TPL_BASE = """
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <title>{{ title }}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
-
-<nav class="navbar navbar-dark bg-dark">
-  <div class="container">
-    <a class="navbar-brand" href="#">QLNS - Đảng viên</a>
-    {% if session.user %}
-        <a href="/logout" class="btn btn-danger">Đăng xuất</a>
-    {% endif %}
-  </div>
-</nav>
-
-<div class="container py-4">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        {% for cat, msg in messages %}
-          <div class="alert alert-{{ cat }}">{{ msg }}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
-    {{ content }}
-</div>
-
-</body>
-</html>
-"""
 
 # =============================
-# LOGIN PAGE
-# =============================
-TPL_LOGIN = """
-<h3 class="text-center mb-3">Đăng nhập hệ thống</h3>
-<div class="card p-4 mx-auto" style="max-width: 400px;">
-    <form method="post">
-        <label class="form-label">Tài khoản</label>
-        <input type="text" class="form-control" name="username" required>
-
-        <label class="form-label mt-3">Mật khẩu</label>
-        <input type="password" class="form-control" name="password" required>
-
-        <button class="btn btn-primary w-100 mt-4">Đăng nhập</button>
-    </form>
-</div>
-"""
-
-# =============================
-# ADMIN PAGE
-# =============================
-TPL_ADMIN = """
-<h2>Trang quản trị</h2>
-<p>Xin chào: <strong>{{ session.user.name }}</strong></p>
-
-<h4 class="mt-4">Danh sách người dùng</h4>
-<table class="table table-bordered">
-  <tr><th>Username</th><th>Role</th><th>Tên</th><th>Xóa</th></tr>
-
-  {% for username, data in users.items() %}
-  <tr>
-      <td>{{ username }}</td>
-      <td>{{ data.role }}</td>
-      <td>{{ data.name }}</td>
-      <td>
-        {% if username != "admin" %}
-          <a class="btn btn-danger btn-sm" href="/admin/users/delete/{{ username }}">Xóa</a>
-        {% endif %}
-      </td>
-  </tr>
-  {% endfor %}
-</table>
-"""
-
-# =============================
-# CHI BỘ PAGE
-# =============================
-TPL_CHIBO = """
-<h2>Trang Chi bộ</h2>
-<p>Xin chào: <strong>{{ session.user.name }}</strong></p>
-"""
-
-# =============================
-# ĐẢNG VIÊN PAGE
-# =============================
-TPL_DANGVIEN = """
-<h2>Trang Đảng viên</h2>
-<p>Xin chào: <strong>{{ session.user.name }}</strong></p>
-"""
-
-# =============================
-# Helper: render inline template
-# =============================
-def render_page(title, tpl, **kwargs):
-    return render_template_string(
-        TPL_BASE,
-        title=title,
-        content=render_template_string(tpl, **kwargs),
-    )
-
-# =============================
-# LOGIN REQUIRED DECORATOR
+#  LOGIN REQUIRED DECORATOR
 # =============================
 def login_required(role=None):
     def wrapper(fn):
@@ -131,50 +26,81 @@ def login_required(role=None):
         def decorated(*args, **kwargs):
             if "user" not in session:
                 return redirect("/login")
-
             if role and session["user"]["role"] != role:
                 flash("Bạn không có quyền truy cập!", "danger")
-                return redirect("/")
-
+                return redirect("/dashboard")
             return fn(*args, **kwargs)
         return decorated
     return wrapper
 
 
 # =============================
-# ROUTES
+#  ROUTES
 # =============================
 
 @app.route("/")
 def index():
-    if "user" in session:
-        role = session["user"]["role"]
-        if role == "admin":
-            return redirect("/admin")
-        if role == "chi_bo":
-            return redirect("/chi_bo")
-        if role == "dang_vien":
-            return redirect("/dang_vien")
     return redirect("/login")
 
 
+# ----- LOGIN -----
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username")
         pw = request.form.get("password")
-
         if username in USERS and USERS[username]["password"] == pw:
             session["user"] = {
                 "username": username,
                 "role": USERS[username]["role"],
-                "name": USERS[username]["name"],
+                "name": USERS[username]["name"]
             }
-            return redirect("/")
-
+            role = USERS[username]["role"]
+            if role == "admin":
+                return redirect("/admin")
+            elif role == "chi_bo":
+                return redirect("/chi_bo")
+            else:
+                return redirect("/dang_vien")
         flash("Sai tài khoản hoặc mật khẩu!", "danger")
 
-    return render_page("Đăng nhập", TPL_LOGIN)
+    login_html = """
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Đăng nhập</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-light">
+      <div class="container d-flex align-items-center justify-content-center" style="min-height: 100vh;">
+        <div class="card p-4 shadow" style="max-width: 400px; width: 100%;">
+          <h3 class="text-center mb-3 text-success">Đăng nhập hệ thống</h3>
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              {% for category, msg in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                  {{ msg }}
+                  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+              {% endfor %}
+            {% endif %}
+          {% endwith %}
+          <form method="post">
+            <label class="form-label">Tài khoản</label>
+            <input type="text" class="form-control" name="username" required>
+            <label class="form-label mt-3">Mật khẩu</label>
+            <input type="password" class="form-control" name="password" required>
+            <button class="btn btn-success w-100 mt-4">Đăng nhập</button>
+          </form>
+        </div>
+      </div>
+      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+    </html>
+    """
+    return render_template_string(login_html)
 
 
 @app.route("/logout")
@@ -183,41 +109,149 @@ def logout():
     return redirect("/login")
 
 
-# -------- ADMIN ----------
+# ----- DASHBOARD -----
+@app.route("/dashboard")
+@login_required()
+def dashboard():
+    dashboard_html = """
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Dashboard</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-light">
+      <div class="container py-5">
+        <h3>Xin chào, {{ session.user.name }}</h3>
+        <a href="/logout" class="btn btn-danger mt-3">Đăng xuất</a>
+      </div>
+    </body>
+    </html>
+    """
+    return render_template_string(dashboard_html)
+
+
+# =============================
+#  ADMIN ROUTES
+# =============================
 @app.route("/admin")
 @login_required("admin")
 def admin_home():
-    return render_page("Quản trị", TPL_ADMIN, users=USERS)
+    return admin_users()
+
+
+@app.route("/admin/users")
+@login_required("admin")
+def admin_users():
+    admin_html = """
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Admin - Users</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-light">
+      <div class="container py-5">
+        <h3>Quản lý người dùng</h3>
+        <table class="table table-striped mt-3">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Tên</th>
+              <th>Role</th>
+              <th>Hành động</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for username, u in users.items() %}
+            <tr>
+              <td>{{ username }}</td>
+              <td>{{ u.name }}</td>
+              <td>{{ u.role }}</td>
+              <td>
+                <a href="/admin/users/delete/{{ username }}" class="btn btn-sm btn-danger">Xóa</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <a href="/logout" class="btn btn-danger mt-3">Đăng xuất</a>
+      </div>
+    </body>
+    </html>
+    """
+    return render_template_string(admin_html, users=USERS)
 
 
 @app.route("/admin/users/delete/<username>")
 @login_required("admin")
 def admin_delete_user(username):
-    if username in USERS and username != "admin":
+    if username in USERS:
         del USERS[username]
         flash("Đã xóa người dùng!", "success")
     else:
-        flash("Không thể xóa!", "danger")
+        flash("User không tồn tại!", "danger")
+    return redirect("/admin/users")
 
-    return redirect("/admin")
 
-
-# -------- CHI BỘ ----------
+# =============================
+#  CHI BỘ ROUTE
+# =============================
 @app.route("/chi_bo")
 @login_required("chi_bo")
 def chi_bo_home():
-    return render_page("Chi bộ", TPL_CHIBO)
+    chi_bo_html = """
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Chi bộ</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-light">
+      <div class="container py-5">
+        <h3>Xin chào, {{ session.user.name }} (Chi bộ)</h3>
+        <a href="/logout" class="btn btn-danger mt-3">Đăng xuất</a>
+      </div>
+    </body>
+    </html>
+    """
+    return render_template_string(chi_bo_html)
 
 
-# -------- ĐẢNG VIÊN ----------
+# =============================
+#  ĐẢNG VIÊN ROUTE
+# =============================
 @app.route("/dang_vien")
 @login_required("dang_vien")
 def dang_vien_home():
-    return render_page("Đảng viên", TPL_DANGVIEN)
+    dang_vien_html = """
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Đảng viên</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-light">
+      <div class="container py-5">
+        <h3>Xin chào, {{ session.user.name }} (Đảng viên)</h3>
+        <a href="/logout" class="btn btn-danger mt-3">Đăng xuất</a>
+      </div>
+    </body>
+    </html>
+    """
+    return render_template_string(dang_vien_html)
 
 
 # =============================
-# RUN
+#  RUN LOCAL
 # =============================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(debug=True)
