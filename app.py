@@ -1,23 +1,24 @@
-# app.py
+# app.py - HỆ THỐNG QUẢN LÝ ĐẢNG VIÊN & TÀI LIỆU CHI BỘ (2025)
 import os
 import re
 import json
 import requests
+from datetime import datetime
 from functools import wraps
 from flask import (
     Flask, request, redirect, url_for, render_template_string,
-    session, abort, send_from_directory
+    session, abort, send_from_directory, flash
 )
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 
-# Optional: Firestore
+# Optional dependencies
 try:
     from google.cloud import firestore
     FIRESTORE_AVAILABLE = True
 except Exception:
     FIRESTORE_AVAILABLE = False
 
-# Optional: document parsing libs (light usage)
 try:
     import PyPDF2
 except Exception:
@@ -31,7 +32,6 @@ try:
 except Exception:
     pd = None
 
-# OpenAI
 try:
     import openai
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -42,43 +42,39 @@ except Exception:
     openai = None
     OPENAI_AVAILABLE = False
 
-# SerpAPI key (for real web search fallback)
-SERPAPI_KEY = os.getenv("SERPAPI_KEY")  # set in env, do NOT hardcode
+SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 
-# Flask app
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "dev-secret-key")
+app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025-change-in-production")
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(os.path.join(os.path.dirname(__file__), "static"), exist_ok=True)
 
-# Upload folder
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
+LOGO_PATH = "/static/Logo.png"
 
 # -------------------------
-# In-memory / Firestore init
+# Data storage (in-memory + Firestore fallback)
 # -------------------------
-# In-memory datasets (fallback)
 USERS = {
-    "admin": {"password": "Test@321", "role": "admin", "name": "Quản trị viên"},
-    "bithu": {"password": "Test@123", "role": "bithu", "name": "Bí thư Chi bộ"},
-    "user_demo": {"password": "Test@123", "role": "dangvien", "name": "User Demo"},
-    "dv01": {"password": "Test@123", "role": "dangvien", "name": "Đảng viên 01"},
+    "admin": {"password": generate_password_hash("Test@123"), "role": "admin", "name": "Quản trị viên"},
+    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
+    "user_demo": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "User Demo"},
+    "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
 }
 
-# In-memory storage (fallback)
-DOCS = {}         # filename -> {"summary","content","uploader"}
-CHAT_HISTORY = {} # username -> [{"question","answer"}...]
-NHAN_XET = {}     # per dang vien code -> text
-SINH_HOAT = []    # chung chi bo
-CHI_BO_INFO = {}  # e.g. {"baso": "...", "name": "Chi bộ X"}
+DOCS = {}           # filename -> dict
+CHAT_HISTORY = {}   # username -> list of dicts
+NHAN_XET = {}       # dv_code -> text
+SINH_HOAT = []      # list of activities
+CHI_BO_INFO = {"name": "Chi bộ Trường THPT XYZ", "baso": ""}
 
-# Firestore client (if available & credentials)
 FS_CLIENT = None
 if FIRESTORE_AVAILABLE:
     try:
         FS_CLIENT = firestore.Client()
     except Exception:
-        FS_CLIENT = None
+        pass
 
 # -------------------------
 # Utilities
@@ -95,6 +91,9 @@ def login_required(role=None):
         return decorated
     return wrapper
 
+def admin_required(fn):
+    return login_required("admin")(fn)
+
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
@@ -108,342 +107,220 @@ def read_file_text(path):
             text = []
             with open(path, "rb") as f:
                 reader = PyPDF2.PdfReader(f)
-                for p in reader.pages:
-                    try:
-                        t = p.extract_text() or ""
-                        text.append(t)
-                    except Exception:
-                        continue
+                for page in reader.pages:
+                    t = page.extract_text() or ""
+                    text.append(t)
             return "\n".join(text)
         if ext == "docx" and docx:
-            doc = docx.Document(path)
-            return "\n".join([p.text for p in doc.paragraphs])
-        if ext in ("csv","xlsx") and pd:
-            if ext == "csv":
-                df = pd.read_csv(path, dtype=str, encoding="utf-8", errors="ignore")
-            else:
-                df = pd.read_excel(path, dtype=str)
-            rows = df.fillna("").astype(str).head(20)
-            text = " | ".join(rows.columns.tolist()) + "\n"
-            for _, r in rows.iterrows():
-                text += " | ".join(r.tolist()) + "\n"
-            return text
-    except Exception:
-        pass
-    # fallback: attempt read raw
+            doc_obj = docx.Document(path)
+            return "\n".join([p.text for p in doc_obj.paragraphs])
+        if ext in ("csv", "xlsx") and pd:
+            df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
+            return df.head(30).to_string()
+    except Exception as e:
+        print(e)
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()[:20000]
+            return f.read()[:30000]
     except Exception:
         return ""
-
-def firestore_get_docs():
-    """Return list of (id, data) from Firestore collection 'docs' if available"""
-    results = []
-    if FS_CLIENT:
-        try:
-            coll = FS_CLIENT.collection("docs").stream()
-            for doc in coll:
-                d = doc.to_dict() or {}
-                results.append((doc.id, d))
-        except Exception:
-            pass
-    return results
-
-def find_relevant_docs_local(question):
-    q = question.lower()
-    hits = []
-    # First check Firestore
-    if FS_CLIENT:
-        try:
-            docs = firestore_get_docs()
-            for fn, info in docs:
-                summary = (info.get("summary") or "").lower()
-                content = (info.get("content") or "").lower()
-                if q in summary or q in content:
-                    hits.append((fn, info))
-                else:
-                    for token in q.split():
-                        if token and (token in summary or token in content):
-                            hits.append((fn, info)); break
-        except Exception:
-            pass
-    # Then in-memory DOCS
-    for fn, info in DOCS.items():
-        summary = (info.get("summary") or "").lower()
-        content = (info.get("content") or "").lower()
-        if q in summary or q in content:
-            hits.append((fn, info))
-        else:
-            for token in q.split():
-                if token and (token in summary or token in content):
-                    hits.append((fn, info)); break
-    # keep unique by filename (prefer Firestore ids first)
-    seen = set()
-    uniq = []
-    for fn, info in hits:
-        if fn not in seen:
-            seen.add(fn); uniq.append((fn, info))
-    return uniq
-
-def serpapi_search(query, num=3):
-    """Perform SerpAPI search and return textual snippets (Vietnamese results if possible)."""
-    if not SERPAPI_KEY:
-        return ""
-    url = "https://serpapi.com/search"
-    params = {
-        "q": query,
-        "engine": "google",
-        "api_key": SERPAPI_KEY,
-        "num": num,
-        "hl": "vi"
-    }
-    try:
-        r = requests.get(url, params=params, timeout=8)
-        if r.status_code == 200:
-            data = r.json()
-            snippets = []
-            # organic_results
-            for item in data.get("organic_results", [])[:num]:
-                title = item.get("title") or ""
-                snippet = item.get("snippet") or item.get("snippet_highlighted_words") or ""
-                link = item.get("link") or ""
-                snippets.append(f"{title}\n{snippet}\n{link}")
-            return "\n\n".join(snippets)
-    except Exception:
-        pass
     return ""
 
-def openai_summarize(text, max_tokens=400):
-    if not OPENAI_AVAILABLE:
-        return "(Không có OpenAI key để tóm tắt)"
+def firestore_get(collection_name):
+    if not FS_CLIENT: return []
     try:
-        prompt = [
-            {"role":"system","content":"Bạn là trợ lý tóm tắt tiếng Việt, tóm tắt rõ ràng, đủ ý."},
-            {"role":"user","content":f"Hãy tóm tắt đoạn văn sau (tiếng Việt) trong 3-6 câu, nêu mục đích chính và các điểm quan trọng:\n\n{text}"}
+        return [(d.id, d.to_dict()) for d in FS_CLIENT.collection(collection_name).stream()]
+    except Exception:
+        return []
+
+def openai_summarize(text):
+    if not OPENAI_AVAILABLE or not text.strip():
+        return "Không thể tóm tắt (thiếu OpenAI hoặc nội dung rỗng)."
+    try:
+        resp = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": f"Tóm tắt tài liệu sau bằng tiếng Việt, 4-7 câu:\n\n{text[:6000]}"}],
+            max_tokens=400,
+            temperature=0.3
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Lỗi tóm tắt: {str(e)[:100]}"
+
+def openai_answer(question, context=""):
+    if not OPENAI_AVAILABLE:
+        return "AI chưa được cấu hình."
+    try:
+        messages = [
+            {"role": "system", "content": "Bạn là trợ lý Đảng viên, trả lời chính xác, trang trọng bằng tiếng Việt."},
+            {"role": "user", "content": f"Ngữ cảnh (nếu có):\n{context}\n\nCâu hỏi: {question}"}
         ]
         resp = openai.ChatCompletion.create(
             model="gpt-4o-mini",
-            messages=prompt,
-            max_tokens=max_tokens,
+            messages=messages,
+            max_tokens=600,
             temperature=0.2
         )
-        return resp["choices"][0]["message"]["content"].strip()
+        return resp.choices[0].message.content.strip()
     except Exception:
-        return "(Không thể tóm tắt bằng OpenAI)"
+        return "Lỗi khi gọi AI."
 
-def openai_answer(question, context_text="", max_tokens=500):
-    if not OPENAI_AVAILABLE:
-        return "AI (OpenAI) không được cấu hình."
+def serpapi_search(query, num=4):
+    if not SERPAPI_KEY: return ""
     try:
-        prompt = [
-            {"role":"system","content":"Bạn là trợ lý tiếng Việt trả lời dựa trên nguồn được cung cấp. Nếu có nguồn, nêu rõ tên file hoặc link."},
-            {"role":"user","content":f"Ngữ cảnh:\n{context_text}\n\nCâu hỏi: {question}\n\nTrả lời bằng tiếng Việt, rõ ràng, ngắn gọn, nêu nguồn nếu có."}
-        ]
-        resp = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=prompt,
-            max_tokens=max_tokens,
-            temperature=0.1
-        )
-        return resp["choices"][0]["message"]["content"].strip()
+        params = {"engine": "google", "q": query, "hl": "vi", "num": num, "api_key": SERPAPI_KEY}
+        r = requests.get("https://serpapi.com/search", params=params, timeout=10)
+        if r.status_code != 200: return ""
+        data = r.json()
+        snippets = []
+        for item in data.get("organic_results", [])[:num]:
+            title = item.get("title", "")
+            snippet = item.get("snippet", "")
+            link = item.get("link", "")
+            snippets.append(f"• {title}\n{snippet}\nNguồn: {link}")
+        return "\n\n".join(snippets)
     except Exception:
-        return "Lỗi khi gọi OpenAI."
+        return ""
 
 # -------------------------
-# Base template pieces (using Jinja - no f-strings with braces)
+# Templates (Header & Footer)
 # -------------------------
-BASE_HEADER = """
+HEADER = f"""
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Hệ Thống Chi Bộ</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>
-    body { padding-bottom: 80px; }
-    /* Chat popup */
-    #chat-button { position: fixed; right: 24px; bottom: 24px; z-index: 2000; }
-    #chat-popup { position: fixed; right: 24px; bottom: 80px; width: 360px; max-width: 90%; z-index: 2000; display: none; }
-    #chat-messages { height: 300px; overflow:auto; background: #fff; }
-    .chat-msg { margin-bottom:8px; }
-    .from-user { text-align:right; }
-    .from-bot { text-align:left; }
-  </style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hệ thống Quản lý Đảng viên</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body {{ background: #f8fff8; padding-bottom: 100px; }}
+        .navbar {{ background: #0f5132 !important; }}
+        .footer {{ background: #0f5132; color: white; position: fixed; bottom: 0; width: 100%; padding: 12px 0; text-align: center; font-size: 0.9rem; }}
+        #chat-button {{ position: fixed; right: 20px; bottom: 20px; z-index: 9999; width: 56px; height: 56px; border-radius: 50%; }}
+        #chat-popup {{ position: fixed; right: 20px; bottom: 90px; width: 380px; max-width: 92vw; z-index: 9999; display: none; }}
+        .chat-msg {{ margin: 8px 0; }}
+        .from-user {{ text-align: right; }}
+        .from-bot {{ text-align: left; }}
+    </style>
 </head>
 <body>
-<nav class="navbar navbar-dark bg-dark mb-4">
+<nav class="navbar navbar-dark">
   <div class="container-fluid">
-    <span class="navbar-brand">Hệ Thống Chi Bộ</span>
+    <a class="navbar-brand" href="{url_for('dashboard')}">
+      <img src="{LOGO_PATH}" alt="Logo" height="40" class="me-2">
+      HỆ THỐNG QLNS - ĐẢNG VIÊN
+    </a>
+    {% if session.user %}
     <div class="text-white">
-      {% if session.get('user') %}
-        {{ session.get('user').get('name','') }} ({{ session.get('user').get('username') }})
-        <a href="{{ url_for('logout') }}" class="btn btn-danger btn-sm ms-3">Đăng xuất</a>
-      {% endif %}
+      <i class="bi bi-person-circle"></i> {{ session.user.name }} ({{ session.user.username }})
+      <a href="{url_for('logout')}" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
     </div>
+    {% endif %}
   </div>
 </nav>
-<div class="container">
+<div class="container mt-4">
 """
 
-BASE_FOOTER = """
+FOOTER = """
+</div>
+<div class="footer">
+    © 2025 HỆ THỐNG QLNS - ĐẢNG VIÊN | Toàn bộ quyền được bảo lưu.
 </div>
 
-<!-- Chat popup button -->
-<button id="chat-button" class="btn btn-info rounded-circle" title="Chatbot">
-  💬
-</button>
-
-<!-- Chat popup -->
-<div id="chat-popup" class="card shadow">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <div><strong>Chatbot - Tra cứu tài liệu</strong><br><small class="text-muted">Ưu tiên tài liệu nội bộ</small></div>
-    <div>
-      <button id="clear-history" class="btn btn-sm btn-outline-danger">Xóa lịch sử</button>
-      <button id="close-chat" class="btn btn-sm btn-outline-secondary">×</button>
-    </div>
+<!-- Chat Button & Popup -->
+<button id="chat-button" class="btn btn-success shadow-lg fs-3">Chat</button>
+<div id="chat-popup" class="card shadow-lg">
+  <div class="card-header bg-success text-white d-flex justify-content-between">
+    <strong>Trợ lý AI</strong>
+    <button id="close-chat" class="btn-close btn-close-white"></button>
   </div>
-  <div class="card-body d-flex flex-column p-2">
-    <div id="chat-messages" class="mb-2 p-2 border bg-light"></div>
-    <form id="chat-form" class="d-flex" onsubmit="return false;">
-      <input id="chat-input" class="form-control me-2" placeholder="Nhập câu hỏi..." />
-      <button id="chat-submit" class="btn btn-primary">Hỏi</button>
+  <div class="card-body p-2">
+    <div id="chat-messages" class="border bg-light mb-2" style="height:320px; overflow-y:auto; padding:8px;"></div>
+    <form id="chat-form" class="d-flex">
+      <input id="chat-input" class="form-control form-control-sm me-1" placeholder="Hỏi về Điều lệ, Nghị quyết...">
+      <button id="chat-submit" class="btn btn-success btn-sm">Gửi</button>
     </form>
-    <div id="chat-error" class="text-danger small mt-2" style="display:none;"></div>
   </div>
 </div>
 
 <script>
-const btn = document.getElementById('chat-button');
 const popup = document.getElementById('chat-popup');
-const closeBtn = document.getElementById('close-chat');
-const form = document.getElementById('chat-form');
-const input = document.getElementById('chat-input');
-const messages = document.getElementById('chat-messages');
-const clearBtn = document.getElementById('clear-history');
-const errorBox = document.getElementById('chat-error');
+document.getElementById('chat-button').onclick = () => popup.style.display = 'block';
+document.getElementById('close-chat').onclick = () => popup.style.display = 'none';
 
-btn.addEventListener('click', () => {
-  popup.style.display = 'block';
-  input.focus();
-});
-closeBtn.addEventListener('click', () => { popup.style.display = 'none'; });
-
-function appendMessage(text, from='bot') {
-  const el = document.createElement('div');
-  el.className = 'chat-msg ' + (from==='user' ? 'from-user' : 'from-bot');
-  el.innerHTML = '<div class="small text-muted">' + (from==='user' ? 'Bạn' : 'Trợ lý') + '</div><div>' + text + '</div>';
-  messages.appendChild(el);
-  messages.scrollTop = messages.scrollHeight;
-}
-
-async function askQuestion(q) {
-  errorBox.style.display = 'none';
-  appendMessage(q, 'user');
-  appendMessage('Đang trả lời...', 'bot');
+async function sendQuestion(q) {
+  if (!q.trim()) return;
+  document.getElementById('chat-input').value = '';
+  addMsg(q, 'user');
+  addMsg('Đang suy nghĩ...', 'bot');
   try {
-    const resp = await fetch('{{ url_for("chat_api") }}', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({question: q})
-    });
-    const j = await resp.json();
-    // remove the "Đang trả lời..." last bot message
-    const last = messages.querySelectorAll('.from-bot');
-    if (last.length) last[last.length-1].remove();
-    if (j.error) {
-      appendMessage('Lỗi: ' + j.error, 'bot');
-    } else {
-      appendMessage(j.answer.replace(/\\n/g,'<br/>'), 'bot');
-    }
-  } catch (e) {
-    const last = messages.querySelectorAll('.from-bot');
-    if (last.length) last[last.length-1].remove();
-    appendMessage('Lỗi kết nối. Vui lòng thử lại.', 'bot');
-  }
+    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:q})});
+    const j = await r.json();
+    removeLastBot();
+    addMsg(j.answer || j.error || 'Lỗi', 'bot');
+  } catch(e) { removeLastBot(); addMsg('Lỗi kết nối', 'bot'); }
 }
-
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const q = input.value && input.value.trim();
-  if (!q) { errorBox.textContent = 'Vui lòng nhập câu hỏi.'; errorBox.style.display='block'; return; }
-  input.value = '';
-  await askQuestion(q);
-});
-
-clearBtn.addEventListener('click', async () => {
-  if (!confirm('Xác nhận xóa lịch sử chat trên server cho user này?')) return;
-  try {
-    const resp = await fetch('{{ url_for("chat_clear_api") }}', {method:'POST'});
-    const j = await resp.json();
-    if (j.ok) {
-      messages.innerHTML = '';
-    } else {
-      alert('Xóa không thành công.');
-    }
-  } catch (e) {
-    alert('Lỗi kết nối.');
-  }
-});
+function addMsg(text, sender) {
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + (sender==='user'?'text-end':'');
+  div.innerHTML = `<small class="text-muted">${sender==='user'?'Bạn':'AI'}</small><div class="p-2 rounded ${sender==='user'?'bg-primary text-white':'bg-light'} d-inline-block">${text.replace(/\\n/g,'<br>')}</div>`;
+  document.getElementById('chat-messages').appendChild(div);
+  div.scrollIntoView();
+}
+function removeLastBot() {
+  const bots = document.querySelectorAll('.chat-msg:not(.text-end)');
+  if (bots.length) bots[bots.length-1].remove();
+}
+document.getElementById('chat-form').onsubmit = e => { e.preventDefault(); sendQuestion(document.getElementById('chat-input').value); };
 </script>
-
-</body>
-</html>
+</body></html>
 """
 
 # -------------------------
-# Routes (HTML embedded)
+# Routes
 # -------------------------
 @app.route("/")
 def index():
     return redirect(url_for("login"))
 
-@app.route("/static/<path:p>")
-def static_file(p):
-    return send_from_directory(os.path.join(os.path.dirname(__file__), "static"), p)
-
-# LOGIN
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    err = ""
     if request.method == "POST":
-        u = request.form.get("username","").strip()
-        p = request.form.get("password","")
-        if u in USERS and USERS[u]["password"] == p:
-            # only demo account shown on page, but allow other accounts login (admin/bithu)
-            session["user"] = {"username": u, "role": USERS[u]["role"], "name": USERS[u].get("name", u)}
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        user = USERS.get(username)
+        if user and check_password_hash(user["password"], password):
+            session["user"] = {
+                "username": username,
+                "role": user["role"],
+                "name": user.get("name", username)
+            }
             return redirect(url_for("dashboard"))
-        else:
-            err = "Sai tài khoản hoặc mật khẩu"
-    # Login HTML (shows demo credentials note)
-    html = """
-<h3 class="text-center">Đăng nhập</h3>
-<div class="row justify-content-center">
-  <div class="col-md-5">
-    <form method="post">
-      <div class="mb-2">
-        <label class="form-label">Tài khoản</label>
-        <input class="form-control" name="username" required autofocus>
+        flash("Sai tài khoản hoặc mật khẩu", "danger")
+    return render_template_string(HEADER + """
+    <div class="row justify-content-center">
+      <div class="col-md-4">
+        <div class="card shadow">
+          <div class="card-body">
+            <h4 class="text-center mb-4">Đăng nhập hệ thống</h4>
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+            {% endwith %}
+            <form method="post">
+              <div class="mb-3"><input class="form-control" name="username" placeholder="Tài khoản" required autofocus></div>
+              <div class="mb-3"><input class="form-control" type="password" name="password" placeholder="Mật khẩu" required></div>
+              <button class="btn btn-success w-100">Đăng nhập</button>
+            </form>
+            <div class="alert alert-info mt-3 small">
+              <strong>Demo:</strong> user_demo / Test@123
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="mb-2">
-        <label class="form-label">Mật khẩu</label>
-        <input class="form-control" type="password" name="password" required>
-      </div>
-      <button class="btn btn-primary w-100">Đăng nhập</button>
-    </form>
-    <p class="text-danger mt-2">{{ err }}</p>
-    <div class="alert alert-secondary mt-3 small">
-      <strong>Tài khoản DEMO:</strong><br>
-      ID: <code>user_demo</code><br>
-      Mật khẩu: <code>Test@123</code><br>
-      <em>Chỉ dùng để thử nghiệm demo.</em>
     </div>
-  </div>
-</div>
-"""
-    full = BASE_HEADER + html + BASE_FOOTER
-    return render_template_string(full, err=err)
+    """ + FOOTER)
 
 @app.route("/logout")
 def logout():
@@ -454,320 +331,340 @@ def logout():
 @login_required()
 def dashboard():
     role = session["user"]["role"]
-    if role == "admin":
-        return redirect(url_for("admin"))
-    if role == "bithu":
-        return redirect(url_for("chi_bo"))
-    return redirect(url_for("dang_vien"))
+    if role == "admin": return redirect(url_for("admin_panel"))
+    if role == "bithu": return redirect(url_for("chi_bo_panel"))
+    return redirect(url_for("dangvien_panel"))
 
-# Admin
+# -------------------------
+# Admin Panel
+# -------------------------
 @app.route("/admin")
-@login_required("admin")
-def admin():
-    html = """
-<h3>Quản trị hệ thống</h3>
-<table class="table table-sm">
-  <thead><tr><th>Tài khoản</th><th>Vai trò</th><th>Tên</th></tr></thead>
-  <tbody>
-    {% for u,info in users.items() %}
-    <tr><td>{{u}}</td><td>{{info.role}}</td><td>{{info.name if info.name else ''}}</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-"""
-    full = BASE_HEADER + html + BASE_FOOTER
-    return render_template_string(full, users=USERS)
+@admin_required
+def admin_panel():
+    return render_template_string(HEADER + """
+    <h3 class="text-success"><i class="bi bi-shield-lock"></i> Quản trị hệ thống</h3>
+    <div class="row">
+      <div class="col-md-8">
+        <table class="table table-bordered table-hover">
+          <thead class="table-success"><tr><th>TK</th><th>Họ tên</th><th>Vai trò</th><th>Hành động</th></tr></thead>
+          <tbody>
+          {% for u,info in users.items() %}
+            <tr>
+              <td><strong>{{u}}</strong></td>
+              <td>{{info.name}}</td>
+              <td>{{'Quản trị' if info.role=='admin' else 'Bí thư' if info.role=='bithu' else 'Đảng viên'}}</td>
+              <td>
+                <a href="{{url_for('admin_edit_user', username=u)}}" class="btn btn-sm btn-warning">Sửa</a>
+                <a href="{{url_for('admin_reset_pass', username=u)}}" class="btn btn-sm btn-danger" onclick="return confirm('Reset mật khẩu về Test@123?')">Reset MK</a>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <a href="{{url_for('admin_add_user')}}" class="btn btn-success"><i class="bi bi-plus-lg"></i> Thêm người dùng</a>
+      </div>
+    </div>
+    """ + FOOTER, users=USERS)
 
-# Chi bộ (bí thư)
-@app.route("/chi_bo", methods=["GET","POST"])
-@login_required("bithu")
-def chi_bo():
-    msg_err = ""
+@app.route("/admin/add", methods=["GET","POST"])
+@admin_required
+def admin_add_user():
     if request.method == "POST":
-        # allow setting baso for chi bo and add sinh hoat
-        baso = request.form.get("baso","").strip()
-        noi = request.form.get("noi_dung","").strip()
-        if baso:
-            CHI_BO_INFO['baso'] = baso
-        if noi:
-            SINH_HOAT.append(noi)
-    html = """
-<h3>Trang Bí thư - Chi bộ</h3>
+        username = request.form["username"].strip()
+        name = request.form["name"].strip()
+        role = request.form["role"]
+        if username in USERS:
+            flash("Tài khoản đã tồn tại", "danger")
+        else:
+            USERS[username] = {"password": generate_password_hash("Test@123"), "role": role, "name": name}
+            flash("Thêm thành công. Mật khẩu mặc định: Test@123", "success")
+            return redirect(url_for("admin_panel"))
+    return render_template_string(HEADER + """
+    <h4>Thêm người dùng mới</h4>
+    <form method="post" class="col-md-5">
+      <div class="mb-3"><input name="username" class="form-control" placeholder="Tài khoản" required></div>
+      <div class="mb-3"><input name="name" class="form-control" placeholder="Họ tên" required></div>
+      <div class="mb-3">
+        <select name="role" class="form-select">
+          <option value="dangvien">Đảng viên</option>
+          <option value="bithu">Bí thư</option>
+          <option value="admin">Quản trị</option>
+        </select>
+      </div>
+      <button class="btn btn-success">Thêm</button>
+      <a href="{{url_for('admin_panel')}}" class="btn btn-secondary">Quay lại</a>
+    </form>
+    """ + FOOTER)
 
-<form method="post" class="mb-3">
-  <div class="mb-2">
-    <label class="form-label">Mã/ba số (baso) của Chi bộ</label>
-    <input class="form-control" name="baso" value="{{ chi_bo_info.get('baso','') }}">
-  </div>
-  <div class="mb-2">
-    <label class="form-label">Thêm hoạt động chung</label>
-    <textarea class="form-control" name="noi_dung"></textarea>
-  </div>
-  <button class="btn btn-success">Lưu / Thêm</button>
-</form>
+@app.route("/admin/reset/<username>")
+@admin_required
+def admin_reset_pass(username):
+    if username in USERS:
+        USERS[username]["password"] = generate_password_hash("Test@123")
+        flash(f"Đã reset mật khẩu {username} về Test@123", "success")
+    return redirect(url_for("admin_panel"))
 
-<h5>Hoạt động chung</h5>
-<ul>
-  {% for x in sinhhoat %}
-    <li>{{x}}</li>
-  {% else %}
-    <li>Chưa có hoạt động.</li>
-  {% endfor %}
-</ul>
-
-<h5 class="mt-4">Nhận xét Đảng viên (chọn để chỉnh)</h5>
-<ul>
-  {% for u,info in users.items() %}
-    {% if info.role == 'dangvien' %}
-      <li><a href="{{ url_for('nhan_xet', dv=u) }}">Nhận xét {{ u }}</a></li>
-    {% endif %}
-  {% endfor %}
-</ul>
-"""
-    full = BASE_HEADER + html + BASE_FOOTER
-    return render_template_string(full,
-                                  sinhhoat=SINH_HOAT,
-                                  users=USERS,
-                                  chi_bo_info=CHI_BO_INFO,
-                                  msg_err=msg_err)
-
-@app.route("/nhan_xet/<dv>", methods=["GET","POST"])
+# -------------------------
+# Bí thư Chi bộ
+# -------------------------
+@app.route("/chi-bo")
 @login_required("bithu")
-def nhan_xet(dv):
+def chi_bo_panel():
+    return render_template_string(HEADER + """
+    <h3 class="text-success"><i class="bi bi-building"></i> Trang Bí thư Chi bộ</h3>
+    <div class="row">
+      <div class="col-md-7">
+        <form method="post" action="{{url_for('chi_bo_update')}}">
+          <div class="mb-3">
+            <label class="form-label">Mã số Chi bộ (baso)</label>
+            <input name="baso" class="form-control" value="{{chi_bo.baso}}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Thêm hoạt động sinh hoạt chi bộ</label>
+            <textarea name="hoatdong" class="form-control" rows="3"></textarea>
+          </div>
+          <button class="btn btn-success">Lưu / Thêm hoạt động</button>
+        </form>
+      </div>
+    </div>
+
+    <h5 class="mt-4">Hoạt động chi bộ</h5>
+    <ol>
+      {% for a in sinhoat %}
+        <li>{{a}}</li>
+      {% else %}
+        <li class="text-muted">Chưa có hoạt động</li>
+      {% endfor %}
+    </ol>
+
+    <h5 class="mt-4">Nhận xét Đảng viên</h5>
+    <div class="list-group">
+      {% for u,info in users.items() if info.role == 'dangvien' %}
+        <a href="{{url_for('nhanxet_edit', dv=u)}}" class="list-group-item list-group-item-action">
+          {{info.name}} ({{u}})
+        </a>
+      {% else %}
+        <p class="text-muted">Chưa có đảng viên nào.</p>
+      {% endfor %}
+    </div>
+    """ + FOOTER, users=USERS, chi_bo=CHI_BO_INFO, sinhoat=SINH_HOAT)
+
+@app.route("/chi-bo/update", methods=["POST"])
+@login_required("bithu")
+def chi_bo_update():
+    baso = request.form.get("baso","").strip()
+    hd = request.form.get("hoatdong","").strip()
+    if baso: CHI_BO_INFO["baso"] = baso
+    if hd: SINH_HOAT.append(f"[{datetime.now().strftime('%d/%m/%Y')}] {hd}")
+    return redirect(url_for("chi_bo_panel"))
+
+@app.route("/nhanxet/<dv>", methods=["GET","POST"])
+@login_required("bithu")
+def nhanxet_edit(dv):
     if dv not in USERS or USERS[dv]["role"] != "dangvien":
         abort(404)
     if request.method == "POST":
-        ND = request.form.get("noidung","").strip()
-        NHAN_XET[dv] = ND
-    html = """
-<h3>Nhận xét Đảng viên: {{ dv }}</h3>
-<form method="post">
-  <textarea class="form-control" name="noidung" required>{{ nhan_xet }}</textarea>
-  <button class="btn btn-primary mt-3">Lưu nhận xét</button>
-</form>
-"""
-    full = BASE_HEADER + html + BASE_FOOTER
-    return render_template_string(full, dv=dv, nhan_xet=NHAN_XET.get(dv,""))
+        NHAN_XET[dv] = request.form["noidung"]
+        flash("Đã lưu nhận xét", "success")
+    return render_template_string(HEADER + """
+    <h4>Nhận xét Đảng viên: {{name}}</h4>
+    <form method="post">
+      <textarea name="noidung" class="form-control" rows="10">{{nhanxet}}</textarea>
+      <button class="btn btn-success mt-3">Lưu nhận xét</button>
+    </form>
+    """ + FOOTER, name=USERS[dv]["name"], nhanxet=NHAN_XET.get(dv,""))
 
+# -------------------------
 # Đảng viên
-@app.route("/dang_vien")
+# -------------------------
+@app.route("/dangvien")
 @login_required("dangvien")
-def dang_vien():
+def dangvien_panel():
     dv = session["user"]["username"]
-    html = """
-<h3>Trang Đảng viên: {{ dv }}</h3>
+    return render_template_string(HEADER + """
+    <h3>Xin chào Đảng viên <strong>{{name}}</strong></h3>
+    <div class="row">
+      <div class="col-md-8">
+        <div class="card mb-3">
+          <div class="card-header bg-success text-white">Nhận xét của Bí thư</div>
+          <div class="card-body">
+            {{nhanxet or "Chưa có nhận xét từ Bí thư."}}
+          </div>
+        </div>
 
-<h5>Nhận xét của Bí thư</h5>
-<div class="border p-2">{{ nx or "Chưa có nhận xét." }}</div>
+        <div class="card mb-3">
+          <div class="card-header bg-success text-white">Hoạt động chi bộ</div>
+          <div class="card-body">
+            <ol>
+              {% for a in sinhoat %}
+                <li>{{a}}</li>
+              {% else %}
+                <li>Chưa có hoạt động</li>
+              {% endfor %}
+            </ol>
+          </div>
+        </div>
 
-<h5 class="mt-3">Hoạt động chung</h5>
-<ul>
-  {% for x in sinhhoat %}
-    <li>{{ x }}</li>
-  {% else %}
-    <li>Chưa có hoạt động.</li>
-  {% endfor %}
-</ul>
+        <div class="card">
+          <div class="card-header bg-success text-white">Thông tin chi bộ</div>
+          <div class="card-body">
+            <p><strong>Tên chi bộ:</strong> {{chi_bo.name}}</p>
+            <p><strong>Mã số chi bộ:</strong> {{chi_bo.baso or "Chưa thiết lập"}}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    """ + FOOTER, name=session["user"]["name"], nhanxet=NHAN_XET.get(dv,"<em>Chưa có nhận xét</em>"),
+       sinhoat=SINH_HOAT, chi_bo=CHI_BO_INFO)
 
-<p class="small text-muted mt-3">Mã chi bộ: {{ chi_bo_info.get('baso','(chưa thiết lập)') }}</p>
-"""
-    full = BASE_HEADER + html + BASE_FOOTER
-    return render_template_string(full,
-                                  dv=dv,
-                                  nx=NHAN_XET.get(dv),
-                                  sinhhoat=SINH_HOAT,
-                                  chi_bo_info=CHI_BO_INFO)
+# -------------------------
+# Đổi mật khẩu (tất cả user)
+# -------------------------
+@app.route("/change-password", methods=["GET","POST"])
+@login_required()
+def change_password():
+    if request.method == "POST":
+        old = request.form["old"]
+        new1 = request.form["new1"]
+        new2 = request.form["new2"]
+        user = USERS[session["user"]["username"]]
+        if not check_password_hash(user["password"], old):
+            flash("Mật khẩu cũ không đúng", "danger")
+        elif new1 != new2:
+            flash("Mật khẩu mới không khớp", "danger")
+        elif len(new1) < 8 or not re.search(r"(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])", new1):
+            flash("Mật khẩu phải ≥8 ký tự, có chữ hoa, thường, số và ký tự đặc biệt", "danger")
+        else:
+            USERS[session["user"]["username"]]["password"] = generate_password_hash(new1)
+            flash("Đổi mật khẩu thành công!", "success")
+            return redirect(url_for("dashboard"))
+    return render_template_string(HEADER + """
+    <h4>Đổi mật khẩu</h4>
+    <form method="post" class="col-md-5">
+      <div class="mb-3"><input type="password" name="old" class="form-control" placeholder="Mật khẩu cũ" required></div>
+      <div class="mb-3"><input type="password" name="new1" class="form-control" placeholder="Mật khẩu mới" required></div>
+      <div class="mb-3"><input type="password" name="new2" class="form-control" placeholder="Nhập lại mật khẩu mới" required></div>
+      <button class="btn btn-success">Đổi mật khẩu</button>
+    </form>
+    """ + FOOTER)
 
-# Upload document (stores in Firestore if configured, else in-memory)
+# -------------------------
+# Upload & Document Management
+# -------------------------
 @app.route("/upload", methods=["GET","POST"])
 @login_required()
 def upload():
-    err = ""
+    msg = ""
     if request.method == "POST":
         if "file" not in request.files:
-            err = "Không có file!"
+            msg = "Chưa chọn file"
         else:
-            f = request.files["file"]
-            if f and allowed_file(f.filename):
-                filename = secure_filename(f.filename)
-                path = os.path.join(UPLOAD_FOLDER, filename)
-                # avoid overwrite
-                base, ext = os.path.splitext(filename)
-                cnt = 1
-                while os.path.exists(path):
-                    filename = f"{base}_{cnt}{ext}"
-                    path = os.path.join(UPLOAD_FOLDER, filename)
-                    cnt += 1
-                f.save(path)
+            file = request.files["file"]
+            if file and allowed_file(file.filename):
+                filename = secure_filename(file.filename)
+                path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                file.save(path)
                 content = read_file_text(path)
-                summary = openai_summarize(content[:6000]) if content else "(Không có nội dung trích xuất)"
+                summary = openai_summarize(content)
                 uploader = session["user"]["username"]
-                # Save to Firestore if possible
-                saved_to_fs = False
+                DOCS[filename] = {"content": content, "summary": summary, "uploader": uploader}
+                # Save to Firestore if available
                 if FS_CLIENT:
                     try:
-                        FS_CLIENT.collection("docs").document(filename).set({
-                            "summary": summary,
-                            "content": content,
-                            "uploader": uploader
-                        })
-                        saved_to_fs = True
-                    except Exception:
-                        saved_to_fs = False
-                # Always keep in-memory as well
-                DOCS[filename] = {"summary": summary, "content": content, "uploader": uploader}
-                if not saved_to_fs:
-                    # no success indicator (we do not show success flash), but page will display file list
-                    pass
+                        FS_CLIENT.collection("docs").document(filename).set(DOCS[filename])
+                    except Exception: pass
+                flash("Upload và tóm tắt thành công!", "success")
             else:
-                err = "File không hợp lệ!"
-    html = """
-<h3>Upload tài liệu</h3>
-<form method="post" enctype="multipart/form-data">
-  <input type="file" name="file" class="form-control">
-  <button class="btn btn-success mt-2">Tải lên</button>
-</form>
-<p class="text-danger mt-2">{{ err }}</p>
-
-<h5 class="mt-4">Danh sách tài liệu (ưu tiên Firestore nếu có)</h5>
-<table class="table table-sm">
-  <thead><tr><th>File</th><th>Uploader</th><th>Tóm tắt</th><th>Hành động</th></tr></thead>
-  <tbody>
-    {% for fn,info in docs.items() %}
-      <tr>
-        <td>{{ fn }}</td>
-        <td>{{ info.uploader }}</td>
-        <td style="max-width:420px"><small>{{ info.summary }}</small></td>
-        <td><a href="{{ url_for('doc_view', fn=fn) }}" class="btn btn-sm btn-outline-info">Xem</a></td>
-      </tr>
-    {% else %}
-      <tr><td colspan="4">Chưa có tài liệu</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-"""
-    # If Firestore docs exist, merge them into listing (Firestore prioritized)
-    merged_docs = {}
+                msg = "File không được phép"
+    all_docs = DOCS.copy()
     if FS_CLIENT:
-        try:
-            for doc_id, data in firestore_get_docs():
-                merged_docs[doc_id] = {
-                    "uploader": data.get("uploader","FS"),
-                    "summary": data.get("summary",""),
-                    "content": data.get("content","")
-                }
-        except Exception:
-            pass
-    # overlay in-memory DOCS for files not in Firestore
-    for fn, info in DOCS.items():
-        if fn not in merged_docs:
-            merged_docs[fn] = info
-    full = BASE_HEADER + html + BASE_FOOTER
-    return render_template_string(full, err=err, docs=merged_docs)
+        for doc_id, data in firestore_get("docs"):
+            all_docs[doc_id] = data
+    return render_template_string(HEADER + """
+    <h3>Upload tài liệu</h3>
+    <form method="post" enctype="multipart/form-data" class="mb-4">
+      <input type="file" name="file" class="form-control w-50 d-inline" required>
+      <button class="btn btn-success ms-2">Tải lên</button>
+    </form>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+    {% endwith %}
 
-@app.route("/docs/<fn>")
+    <h5>Danh sách tài liệu</h5>
+    <table class="table table-hover">
+      <thead class="table-success"><tr><th>File</th><th>Tóm tắt</th><th>Uploader</th><th></th></tr></thead>
+      {% for fn,info in docs.items() %}
+      <tr>
+        <td><strong>{{fn}}</strong></td>
+        <td style="max-width:500px"><small>{{info.summary[:200]}}...</small></td>
+        <td>{{info.uploader}}</td>
+        <td><a href="{{url_for('doc_view', fn=fn)}}" class="btn btn-sm btn-outline-primary">Xem</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">Chưa có tài liệu</td></tr>
+      {% endfor %}
+    </table>
+    <p><a href="{{url_for('change_password')}}" class="btn btn-outline-secondary">Đổi mật khẩu</a></p>
+    """ + FOOTER, docs=all_docs)
+
+@app.route("/doc/<fn>")
 @login_required()
 def doc_view(fn):
-    # Try Firestore first
-    info = None
-    if FS_CLIENT:
-        try:
-            doc = FS_CLIENT.collection("docs").document(fn).get()
-            if doc.exists:
-                info = doc.to_dict()
-                info.setdefault("uploader","(FS)")
-        except Exception:
-            info = None
-    if not info:
-        info = DOCS.get(fn)
-    if not info:
-        abort(404)
-    html = """
-<h3>{{ fn }}</h3>
-<p><b>Người tải lên:</b> {{ info.uploader }}</p>
-<h5>Tóm tắt</h5>
-<div class="border p-2">{{ info.summary }}</div>
-
-<h5 class="mt-3">Nội dung (trích)</h5>
-<pre class="border p-2" style="white-space: pre-wrap;">{{ info.content[:2000] }}</pre>
-"""
-    full = BASE_HEADER + html + BASE_FOOTER
-    return render_template_string(full, fn=fn, info=info)
+    info = DOCS.get(fn) or (FS_CLIENT.collection("docs").document(fn).get().to_dict() if FS_CLIENT else None)
+    if not info: abort(404)
+    return render_template_string(HEADER + """
+    <h4>{{fn}}</h4>
+    <p><strong>Người upload:</strong> {{info.uploader}}</p>
+    <div class="card mb-3">
+      <div class="card-header bg-success text-white">Tóm tắt AI</div>
+      <div class="card-body">{{info.summary}}</div>
+    </div>
+    <div class="card">
+      <div class="card-header">Nội dung (trích dẫn)</div>
+      <div class="card-body"><pre style="max-height:600px; overflow:auto;">{{info.content[:5000]}}</pre></div>
+    </div>
+    """ + FOOTER, fn=fn, info=info)
 
 # -------------------------
-# Chat APIs (popup uses these endpoints)
+# Chat API
 # -------------------------
 @app.route("/api/chat", methods=["POST"])
 @login_required()
 def chat_api():
     data = request.get_json() or {}
     q = data.get("question","").strip()
-    user = session["user"]["username"]
     if not q:
-        return {"error":"Vui lòng nhập câu hỏi"}, 400
+        return {"error": "Câu hỏi rỗng"}, 400
 
-    # 1) Tìm trong Firestore / nội bộ
-    relevant = find_relevant_docs_local(q)
-    context_parts = []
+    # Tìm trong tài liệu nội bộ
+    relevant = []
+    q_lower = q.lower()
+    for fn, info in DOCS.items():
+        if q_lower in info.get("content","").lower() or q_lower in info.get("summary","").lower():
+            relevant.append((fn, info))
+
     if relevant:
-        for fn, info in relevant[:5]:
-            # include file name + summary
-            summary = info.get("summary","")
-            context_parts.append(f"File: {fn}\nTóm tắt: {summary}")
-        context_text = "\n\n".join(context_parts)
-        # Use OpenAI to answer using context
-        answer = openai_answer(q, context_text=context_text) if OPENAI_AVAILABLE else \
-                 ("Dựa trên tài liệu:\n" + ("\n".join([f"{fn}: {info.get('summary','')}" for fn,info in relevant])))
+        context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant[:5]])
+        answer = openai_answer(q, context)
     else:
-        # NOT FOUND IN INTERNAL DOCS -> do real web search via SerpAPI and synthesize with OpenAI
-        # Per requirement: ABSOLUTELY no fake fallback. Use SerpAPI (real web) then OpenAI to synthesize.
-        web_snippets = serpapi_search(q)
-        if not web_snippets:
-            answer = "Không tìm thấy thông tin trong tài liệu nội bộ và không thể truy vấn web tại thời điểm này."
+        web = serpapi_search(q)
+        if web and OPENAI_AVAILABLE:
+            answer = openai_answer(q, f"Kết quả tìm kiếm web (ngày {datetime.now().strftime('%d/%m/%Y')}):\n{web}")
         else:
-            # synthesize with OpenAI
-            if OPENAI_AVAILABLE:
-                answer = openai_answer(q, context_text=web_snippets)
-            else:
-                answer = "Tài liệu nội bộ không có. Kết quả tìm kiếm web:\n\n" + web_snippets
+            answer = web or "Không tìm thấy thông tin phù hợp trong tài liệu nội bộ và không thể truy vấn web."
 
-    # Save chat history in Firestore if possible, else in-memory
-    try:
-        CHAT_HISTORY.setdefault(user, []).append({"question": q, "answer": answer})
-        if FS_CLIENT:
-            try:
-                # append to a document per user
-                doc_ref = FS_CLIENT.collection("chat_history").document(user)
-                doc = doc_ref.get()
-                if doc.exists:
-                    old = doc.to_dict().get("items", [])
-                    old.append({"question": q, "answer": answer})
-                    doc_ref.set({"items": old})
-                else:
-                    doc_ref.set({"items": [{"question": q, "answer": answer}]})
-            except Exception:
-                pass
-    except Exception:
-        pass
-
+    # Lưu lịch sử
+    user = session["user"]["username"]
+    CHAT_HISTORY.setdefault(user, []).append({"q": q, "a": answer, "time": datetime.now().isoformat()})
     return {"answer": answer}
 
-@app.route("/api/chat/clear", methods=["POST"])
-@login_required()
-def chat_clear_api():
-    user = session["user"]["username"]
-    CHAT_HISTORY[user] = []
-    if FS_CLIENT:
-        try:
-            FS_CLIENT.collection("chat_history").document(user).set({"items":[]})
-        except Exception:
-            pass
-    return {"ok": True}
+# -------------------------
+# Static & Run
+# -------------------------
+@app.route("/static/<path:p>")
+def serve_static(p):
+    return send_from_directory("static", p)
 
-# -------------------------
-# Run
-# -------------------------
 if __name__ == "__main__":
-    # Port set by environment or default
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
