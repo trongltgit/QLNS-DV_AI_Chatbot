@@ -98,7 +98,7 @@ def admin_required(fn):
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
-# Hàm tiện ích mới: Chuẩn hóa tiếng Việt (bỏ dấu)
+# Hàm tiện ích: Chuẩn hóa tiếng Việt (bỏ dấu)
 def normalize_vietnamese(text):
     """Chuyển đổi chuỗi tiếng Việt có dấu thành không dấu, loại bỏ ký tự không cần thiết."""
     if not isinstance(text, str):
@@ -168,9 +168,11 @@ def openai_answer(question, context=""):
             {"role": "user", "content": f"Ngữ cảnh:\n{context}\n\nCâu hỏi: {question}"}
         ]
         
-        # Nếu không có ngữ cảnh nào (tức là không tìm thấy trong RAG và Search), 
-        # loại bỏ đoạn ngữ cảnh để cho phép mô hình trả lời bằng kiến thức nền
-        if "Không có ngữ cảnh bên ngoài" in context or (not context.strip()):
+        # Nếu ngữ cảnh là rỗng hoặc chỉ chứa thông tin chi bộ/thông báo lỗi, 
+        # cho phép mô hình dựa vào kiến thức nền.
+        is_context_empty = ("NGỮ CẢNH TÀI LIỆU" not in context and "NGỮ CẢNH TÌM KIẾM WEB" not in context)
+        
+        if is_context_empty:
             messages = [
                 {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt."},
                 {"role": "user", "content": question}
@@ -207,7 +209,7 @@ def serpapi_search(query, num=4):
         return ""
 
 # -------------------------
-# Templates (ĐÃ CẬP NHẬT HEADER VỚI NÚT ĐỔI MẬT KHẨU)
+# Templates
 # -------------------------
 HEADER = f"""
 <!DOCTYPE html>
@@ -719,7 +721,7 @@ def doc_view(fn):
     <a href="{{url_for('upload')}}" class="btn btn-secondary mt-3"><i class="bi bi-arrow-left"></i> Quay lại</a>
     """ + FOOTER, fn=fn, info=info)
 
-# ====================== CHAT API (ĐÃ CẢI THIỆN LOGIC RAG/SEARCH/KIẾN THỨC NỀN) ======================
+# ====================== CHAT API (ĐÃ CẢI THIỆN LOGIC RAG/SEARCH) ======================
 @app.route("/api/chat", methods=["POST"])
 @login_required()
 def chat_api():
@@ -728,10 +730,10 @@ def chat_api():
     if not q:
         return jsonify({"error": "Câu hỏi rỗng"}), 400
 
-    # Chuẩn hóa câu hỏi người dùng
+    # Chuẩn hóa câu hỏi người dùng cho mục đích tìm kiếm nội bộ
     normalized_q = normalize_vietnamese(q)
     
-    # Khởi tạo ngữ cảnh
+    # Khởi tạo ngữ cảnh cơ bản
     context = f"""
     NGỮ CẢNH CHI BỘ:
     Tên chi bộ: {CHI_BO_INFO.get('name', 'N/A')}. 
@@ -739,29 +741,34 @@ def chat_api():
     """
     
     answer = ""
-    relevant = []
+    relevant_docs = []
     
     # 1. Tìm kiếm tài liệu liên quan trong DOCS (RAG)
     for fn, info in DOCS.items():
-        # So sánh câu hỏi đã chuẩn hóa với nội dung đã chuẩn hóa
         if normalized_q in info.get("normalized_content",""):
-            relevant.append((fn, info))
+            relevant_docs.append((fn, info))
 
-    if relevant:
+    if relevant_docs:
         # A. Ưu tiên sử dụng tài liệu đã upload (RAG)
-        doc_context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant[:5]])
+        doc_context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant_docs[:5]])
         context += "\n\nNGỮ CẢNH TÀI LIỆU:\n" + doc_context
         answer = openai_answer(q, context)
     else:
         # B. Nếu không có tài liệu liên quan, thực hiện tìm kiếm web (SerpAPI)
-        web = serpapi_search(q) # Dùng câu hỏi gốc (có dấu) để tìm kiếm web
-        if web:
-            context += "\n\nNGỮ CẢNH TÌM KIẾM WEB:\n" + web
-            # Gọi OpenAI với ngữ cảnh tìm kiếm web để trả lời
-            answer = openai_answer(q, context)
+        if not SERPAPI_KEY:
+            # Nếu thiếu key, chỉ có thể dựa vào kiến thức nền
+            answer = openai_answer(q, "Không có ngữ cảnh bên ngoài. (SerpAPI chưa được cấu hình)")
         else:
-            # C. Nếu không có cả RAG lẫn Search, sử dụng kiến thức nền của mô hình
-            answer = openai_answer(q, "Không có ngữ cảnh bên ngoài.")
+            # Thực hiện tra cứu web
+            web_search_results = serpapi_search(q)
+            
+            if web_search_results:
+                # Nếu có kết quả search web, sử dụng nó làm ngữ cảnh chính
+                context += "\n\nNGỮ CẢNH TÌM KIẾM WEB:\n" + web_search_results
+                answer = openai_answer(q, context)
+            else:
+                # Không có RAG và không tìm thấy kết quả trên web, dựa vào kiến thức nền
+                answer = openai_answer(q, "Không có ngữ cảnh bên ngoài. (Không tìm thấy thông tin trên tài liệu nội bộ hoặc Internet)")
 
     user = session["user"]["username"]
     CHAT_HISTORY.setdefault(user, []).append({"q": q, "a": answer, "time": datetime.now().isoformat()})
