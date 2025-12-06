@@ -1,4 +1,3 @@
-# app.py - HỆ THỐNG QUẢN LÝ ĐẢNG VIÊN & TÀI LIỆU CHI BỘ (2025) - PHIÊN BẢN HOÀN CHỈNH
 import os
 import re
 import requests
@@ -56,8 +55,8 @@ LOGO_PATH = "/static/Logo.png"
 # Data storage
 # -------------------------
 USERS = {
-    "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
-    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ 1"},
+    "admin": {"password": generate_password_hash("Test@123"), "role": "admin", "name": "Quản trị viên"},
+    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
     "user_demo": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "User Demo"},
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
 }
@@ -66,7 +65,7 @@ DOCS = {}           # filename -> dict
 CHAT_HISTORY = {}   # username -> list
 NHAN_XET = {}       # dv_code -> text
 SINH_HOAT = []      # list of activities
-CHI_BO_INFO = {"name": "Chi bộ VCB HCM", "baso": ""}
+CHI_BO_INFO = {"name": "Chi bộ Trường THPT XYZ", "baso": ""}
 
 FS_CLIENT = None
 if FIRESTORE_AVAILABLE:
@@ -184,7 +183,7 @@ def serpapi_search(query, num=4):
 # -------------------------
 # Templates
 # -------------------------
-# ĐÃ SỬA LỖI KEYERROR BẰNG CÁCH DÙNG F-STRING VÀ THOÁT DẤU NGOẶC NHỌN CHO CSS & JINJA
+# ĐÃ SỬA LỖI KEYERROR VÀ APPLICATION CONTEXT
 HEADER = f"""
 <!DOCTYPE html>
 <html lang="vi">
@@ -205,14 +204,13 @@ HEADER = f"""
 <body>
 <nav class="navbar navbar-dark">
   <div class="container-fluid">
-    <a class="navbar-brand" href="{{{url_for('dashboard')}}}">
-      <img src="{LOGO_PATH}" alt="Logo" height="40" class="me-2">
+    <a class="navbar-brand" href="/dashboard">  <img src="{LOGO_PATH}" alt="Logo" height="40" class="me-2">
       HỆ THỐNG QLNS - ĐẢNG VIÊN
     </a>
     {{% if session.user %}}
     <div class="text-white">
-      <i class="bi bi-person-circle"></i> {{{session.user.name}}} ({{{session.user.username}}})
-      <a href="{{{url_for('logout')}}}" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
+      <i class="bi bi-person-circle"></i> {{{{ session.user.name }}}} ({{{{ session.user.username }}}})
+      <a href="{{{{ url_for('logout') }}}}" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
     </div>
     {{% endif %}}
   </div>
@@ -385,7 +383,7 @@ def admin_add_user():
                 "role": role,
                 "name": name
             }
-            #flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
+            flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
             return redirect(url_for("admin_panel"))
     return render_template_string(HEADER + """
     <h4>Thêm người dùng mới</h4>
@@ -437,7 +435,7 @@ def admin_edit_user(username):
 def admin_reset_pass(username):
     if username in USERS:
         USERS[username]["password"] = generate_password_hash("Test@123")
-        #flash(f"Đã reset mật khẩu {username} về Test@123", "success")
+        flash(f"Đã reset mật khẩu {username} về Test@123", "success")
     return redirect(url_for("admin_panel"))
 
 @app.route("/admin/delete/<username>")
@@ -551,7 +549,7 @@ def change_password():
             flash("Mật khẩu phải ≥8 ký tự, có chữ hoa, thường, số và ký tự đặc biệt", "danger")
         else:
             USERS[session["user"]["username"]]["password"] = generate_password_hash(new1)
-            #flash("Đổi mật khẩu thành công!", "success")
+            flash("Đổi mật khẩu thành công!", "success")
             return redirect(url_for("dashboard"))
     return render_template_string(HEADER + """
     <h4>Đổi mật khẩu</h4>
@@ -584,7 +582,7 @@ def upload():
                     try:
                         FS_CLIENT.collection("docs").document(filename).set(DOCS[filename])
                     except: pass
-                #flash("Upload và tóm tắt thành công!", "success")
+                flash("Upload và tóm tắt thành công!", "success")
             else:
                 flash("File không được phép", "danger")
 
