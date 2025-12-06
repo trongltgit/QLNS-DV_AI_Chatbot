@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+import unicodedata
 from datetime import datetime
 from functools import wraps
 from flask import (
@@ -97,6 +98,17 @@ def admin_required(fn):
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
+# Hàm tiện ích mới: Chuẩn hóa tiếng Việt (bỏ dấu)
+def normalize_vietnamese(text):
+    """Chuyển đổi chuỗi tiếng Việt có dấu thành không dấu, loại bỏ ký tự không cần thiết."""
+    if not isinstance(text, str):
+        return ""
+    # Chuyển về NFKD normalization form
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
+    # Loại bỏ các ký tự không phải chữ cái, số, khoảng trắng
+    text = re.sub(r'[^\w\s]', '', text).lower()
+    return text
+
 def read_file_text(path):
     ext = path.rsplit(".", 1)[1].lower()
     try:
@@ -152,9 +164,18 @@ def openai_answer(question, context=""):
         return "AI chưa được cấu hình. (Thiếu OPENAI_API_KEY)"
     try:
         messages = [
-            {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt. CHỈ SỬ DỤNG thông tin được cung cấp trong NGỮ CẢNH để trả lời, không giả định. Nếu không có thông tin, hãy nói không tìm thấy."},
+            {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt. CHỈ SỬ DỤNG thông tin được cung cấp trong NGỮ CẢNH để trả lời, không giả định. Nếu không có thông tin, hãy nói không tìm thấy. Nếu là câu hỏi chung (ví dụ: 'MMA khác boxing thế nào'), hãy trả lời bằng kiến thức nền của bạn."},
             {"role": "user", "content": f"Ngữ cảnh:\n{context}\n\nCâu hỏi: {question}"}
         ]
+        
+        # Nếu không có ngữ cảnh nào (tức là không tìm thấy trong RAG và Search), 
+        # loại bỏ đoạn ngữ cảnh để cho phép mô hình trả lời bằng kiến thức nền
+        if "Không có ngữ cảnh bên ngoài" in context or (not context.strip()):
+            messages = [
+                {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt."},
+                {"role": "user", "content": question}
+            ]
+
         resp = OPENAI_CLIENT.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
@@ -560,7 +581,7 @@ def dangvien_panel():
     """ + FOOTER, name=session["user"]["name"], nhanxet=NHAN_XET.get(dv,"Chưa có nhận xét"),
         sinhoat=SINH_HOAT, chi_bo=CHI_BO_INFO)
 
-# ====================== ĐỔI MẬT KHẨU (ROUTE) ======================
+# ====================== ĐỔI MẬT KHẨU (ROUTE ĐÃ CẢI TIẾN LOGIC) ======================
 @app.route("/change-password", methods=["GET","POST"])
 @login_required()
 def change_password():
@@ -569,21 +590,38 @@ def change_password():
         new1 = request.form["new1"]
         new2 = request.form["new2"]
         user = USERS[session["user"]["username"]]
+        
+        # 1. Kiểm tra mật khẩu cũ
         if not check_password_hash(user["password"], old):
-            flash("Mật khẩu cũ không đúng", "danger")
+            flash("Mật khẩu cũ không đúng.", "danger")
+        # 2. Kiểm tra mật khẩu mới trùng khớp
         elif new1 != new2:
-            flash("Mật khẩu mới không khớp", "danger")
-        elif len(new1) < 8 or not re.search(r"(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])", new1):
-            flash("Mật khẩu phải ≥8 ký tự, có chữ hoa, thường, số và ký tự đặc biệt", "danger")
+            flash("Mật khẩu mới không khớp.", "danger")
+        # 3. Kiểm tra quy tắc bảo mật
+        elif len(new1) < 8:
+            flash("Mật khẩu phải có ít nhất 8 ký tự.", "danger")
+        elif not re.search(r"[a-z]", new1):
+            flash("Mật khẩu phải chứa ít nhất 1 chữ thường.", "danger")
+        elif not re.search(r"[A-Z]", new1):
+            flash("Mật khẩu phải chứa ít nhất 1 chữ HOA.", "danger")
+        elif not re.search(r"\d", new1):
+            flash("Mật khẩu phải chứa ít nhất 1 số.", "danger")
+        elif not re.search(r"[@$!%*?&]", new1):
+            flash("Mật khẩu phải chứa ít nhất 1 ký tự đặc biệt (@$!%*?&).", "danger")
         else:
+            # Thành công
             USERS[session["user"]["username"]]["password"] = generate_password_hash(new1)
             flash("Đổi mật khẩu thành công!", "success")
             return redirect(url_for("dashboard"))
+            
     return render_template_string(HEADER + """
     <h4>Đổi mật khẩu</h4>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
     {% endwith %}
+    <div class="alert alert-info small">
+        <strong>Yêu cầu:</strong> Mật khẩu mới phải có ít nhất 8 ký tự, bao gồm chữ hoa, chữ thường, số và ký tự đặc biệt (@$!%*?&).
+    </div>
     <form method="post" class="col-md-5">
       <div class="mb-3"><input type="password" name="old" class="form-control" placeholder="Mật khẩu cũ" required></div>
       <div class="mb-3"><input type="password" name="new1" class="form-control" placeholder="Mật khẩu mới" required></div>
@@ -606,9 +644,18 @@ def upload():
                 path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 file.save(path)
                 content = read_file_text(path)
+                
+                # Chuẩn hóa nội dung tài liệu để dễ dàng so sánh
+                normalized_content = normalize_vietnamese(content)
+                
                 summary = openai_summarize(content)
                 uploader = session["user"]["username"]
-                DOCS[filename] = {"content": content, "summary": summary, "uploader": uploader}
+                DOCS[filename] = {
+                    "content": content, 
+                    "normalized_content": normalized_content, # Lưu nội dung đã chuẩn hóa
+                    "summary": summary, 
+                    "uploader": uploader
+                }
                 if FS_CLIENT:
                     try:
                         FS_CLIENT.collection("docs").document(filename).set(DOCS[filename])
@@ -647,6 +694,7 @@ def upload():
     </table>
     """ + FOOTER, docs=all_docs)
 
+# ====================== XEM TÀI LIỆU (ĐÃ THÊM NÚT QUAY LẠI) ======================
 @app.route("/doc/<fn>")
 @login_required()
 def doc_view(fn):
@@ -668,9 +716,10 @@ def doc_view(fn):
       <div class="card-header">Nội dung (trích dẫn)</div>
       <div class="card-body"><pre style="max-height:600px; overflow:auto;">{{info.content[:5000]}}</pre></div>
     </div>
+    <a href="{{url_for('upload')}}" class="btn btn-secondary mt-3"><i class="bi bi-arrow-left"></i> Quay lại</a>
     """ + FOOTER, fn=fn, info=info)
 
-# ====================== CHAT API ======================
+# ====================== CHAT API (ĐÃ CẢI THIỆN LOGIC RAG/SEARCH/KIẾN THỨC NỀN) ======================
 @app.route("/api/chat", methods=["POST"])
 @login_required()
 def chat_api():
@@ -679,6 +728,9 @@ def chat_api():
     if not q:
         return jsonify({"error": "Câu hỏi rỗng"}), 400
 
+    # Chuẩn hóa câu hỏi người dùng
+    normalized_q = normalize_vietnamese(q)
+    
     # Khởi tạo ngữ cảnh
     context = f"""
     NGỮ CẢNH CHI BỘ:
@@ -688,11 +740,11 @@ def chat_api():
     
     answer = ""
     relevant = []
-    q_lower = q.lower()
-    # 1. Tìm kiếm tài liệu liên quan trong DOCS
+    
+    # 1. Tìm kiếm tài liệu liên quan trong DOCS (RAG)
     for fn, info in DOCS.items():
-        # Tìm trong nội dung hoặc tóm tắt
-        if q_lower in info.get("content","").lower() or q_lower in info.get("summary","").lower():
+        # So sánh câu hỏi đã chuẩn hóa với nội dung đã chuẩn hóa
+        if normalized_q in info.get("normalized_content",""):
             relevant.append((fn, info))
 
     if relevant:
@@ -702,18 +754,14 @@ def chat_api():
         answer = openai_answer(q, context)
     else:
         # B. Nếu không có tài liệu liên quan, thực hiện tìm kiếm web (SerpAPI)
-        web = serpapi_search(q)
+        web = serpapi_search(q) # Dùng câu hỏi gốc (có dấu) để tìm kiếm web
         if web:
             context += "\n\nNGỮ CẢNH TÌM KIẾM WEB:\n" + web
             # Gọi OpenAI với ngữ cảnh tìm kiếm web để trả lời
             answer = openai_answer(q, context)
         else:
-            # C. Nếu không có cả dữ liệu cục bộ lẫn kết quả search web
-            if OPENAI_AVAILABLE:
-                # Nếu OpenAI có, vẫn cố gắng hỏi nó (nó có thể biết)
-                answer = openai_answer(q, "Không có ngữ cảnh bên ngoài.")
-            else:
-                answer = "Không tìm thấy thông tin liên quan từ tài liệu nội bộ hoặc Internet. (Thiếu SerpAPI hoặc OpenAI)."
+            # C. Nếu không có cả RAG lẫn Search, sử dụng kiến thức nền của mô hình
+            answer = openai_answer(q, "Không có ngữ cảnh bên ngoài.")
 
     user = session["user"]["username"]
     CHAT_HISTORY.setdefault(user, []).append({"q": q, "a": answer, "time": datetime.now().isoformat()})
