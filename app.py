@@ -11,7 +11,7 @@ from flask import (
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# Optional dependencies
+# Optional dependencies (Duy trì cấu trúc ban đầu)
 try:
     from google.cloud import firestore
     FIRESTORE_AVAILABLE = True
@@ -31,11 +31,10 @@ try:
 except Exception:
     pd = None
 
-# Cập nhật cách khởi tạo OpenAI Client (từ 0.x.x sang 1.x.x)
+# Cập nhật cách khởi tạo OpenAI Client
 try:
     import openai
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    # Khởi tạo client mới (Version 1.x)
     OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
     OPENAI_AVAILABLE = bool(OPENAI_CLIENT)
 except Exception:
@@ -64,7 +63,7 @@ USERS = {
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
 }
 
-DOCS = {}           # filename -> dict
+DOCS = {}           # filename -> dict (Lưu trữ nội dung đã chuẩn hóa)
 CHAT_HISTORY = {}   # username -> list
 NHAN_XET = {}       # dv_code -> text
 SINH_HOAT = []      # list of activities
@@ -98,16 +97,22 @@ def admin_required(fn):
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
-# Hàm tiện ích: Chuẩn hóa tiếng Việt (bỏ dấu)
+# HÀM CỐT LÕI: Chuẩn hóa tiếng Việt (bỏ dấu, chữ thường)
 def normalize_vietnamese(text):
-    """Chuyển đổi chuỗi tiếng Việt có dấu thành không dấu, loại bỏ ký tự không cần thiết."""
+    """
+    Chuyển đổi chuỗi tiếng Việt có dấu thành không dấu, 
+    chuyển về chữ thường và loại bỏ ký tự không cần thiết cho mục đích tìm kiếm.
+    """
     if not isinstance(text, str):
         return ""
-    # Chuyển về NFKD normalization form
+    # Chuyển về NFKD normalization form và mã hóa/giải mã để loại bỏ dấu
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
-    # Loại bỏ các ký tự không phải chữ cái, số, khoảng trắng
-    text = re.sub(r'[^\w\s]', '', text).lower()
-    return text
+    # Chuyển về chữ thường
+    text = text.lower()
+    # Loại bỏ các ký tự không phải chữ cái, số, hoặc khoảng trắng (giữ lại khoảng trắng)
+    text = re.sub(r'[^\w\s]', '', text)
+    # Loại bỏ khoảng trắng thừa
+    return " ".join(text.split())
 
 def read_file_text(path):
     ext = path.rsplit(".", 1)[1].lower()
@@ -128,12 +133,13 @@ def read_file_text(path):
             return "\n".join([p.text for p in doc_obj.paragraphs])
         if ext in ("csv", "xlsx") and pd:
             df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
+            # Giới hạn số dòng để tránh quá tải
             return df.head(30).to_string()
     except Exception:
         pass
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()[:30000]
+            return f.read()[:30000] # Giới hạn 30kb nội dung
     except Exception:
         return ""
     return ""
@@ -173,7 +179,7 @@ def openai_answer(question, context=""):
             {"role": "user", "content": f"Ngữ cảnh:\n{context}\n\nCâu hỏi: {question}"}
         ]
     else:
-        # Nếu không có ngữ cảnh cụ thể (chỉ có ngữ cảnh chi bộ hoặc rỗng), cho phép AI trả lời bằng kiến thức nền
+        # Nếu không có ngữ cảnh cụ thể, cho phép AI trả lời bằng kiến thức nền
         messages = [
             {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt."},
             {"role": "user", "content": question}
@@ -572,6 +578,7 @@ def nhanxet_edit(dv):
     <form method="post">
       <textarea name="noidung" class="form-control" rows="10">{{nhanxet}}</textarea>
       <button class="btn btn-success mt-3">Lưu nhận xét</button>
+      <a href="{{url_for('chi_bo_panel')}}" class="btn btn-secondary ms-2 mt-3"><i class="bi bi-arrow-left"></i> Quay lại</a>
     </form>
     """ + FOOTER, name=USERS[dv]["name"], nhanxet=NHAN_XET.get(dv,""))
 
@@ -604,7 +611,7 @@ def dangvien_panel():
     """ + FOOTER, name=session["user"]["name"], nhanxet=NHAN_XET.get(dv,"Chưa có nhận xét"),
         sinhoat=SINH_HOAT, chi_bo=CHI_BO_INFO)
 
-# ====================== ĐỔI MẬT KHẨU (ROUTE ĐÃ CẢI TIẾN LOGIC) ======================
+# ====================== ĐỔI MẬT KHẨU ======================
 @app.route("/change-password", methods=["GET","POST"])
 @login_required()
 def change_password():
@@ -668,7 +675,7 @@ def upload():
                 file.save(path)
                 content = read_file_text(path)
                 
-                # Chuẩn hóa nội dung tài liệu để dễ dàng so sánh
+                # CHUẨN HÓA nội dung tài liệu để tìm kiếm (Hỗ trợ Tiếng Việt không dấu)
                 normalized_content = normalize_vietnamese(content)
                 
                 summary = openai_summarize(content)
@@ -717,7 +724,7 @@ def upload():
     </table>
     """ + FOOTER, docs=all_docs)
 
-# ====================== XEM TÀI LIỆU (ĐÃ THÊM NÚT QUAY LẠI) ======================
+# ====================== XEM TÀI LIỆU ======================
 @app.route("/doc/<fn>")
 @login_required()
 def doc_view(fn):
@@ -742,7 +749,7 @@ def doc_view(fn):
     <a href="{{url_for('upload')}}" class="btn btn-secondary mt-3"><i class="bi bi-arrow-left"></i> Quay lại</a>
     """ + FOOTER, fn=fn, info=info)
 
-# ====================== CHAT API (ĐÃ CẢI THIỆN LOGIC RAG/SEARCH) ======================
+# ====================== CHAT API (ĐÃ TỐI ƯU HÓA TIẾNG VIỆT & RAG/SEARCH) ======================
 @app.route("/api/chat", methods=["POST"])
 @login_required()
 def chat_api():
@@ -751,7 +758,7 @@ def chat_api():
     if not q:
         return jsonify({"error": "Câu hỏi rỗng"}), 400
 
-    # Chuẩn hóa câu hỏi người dùng cho mục đích tìm kiếm nội bộ
+    # Bước 1: Chuẩn hóa câu hỏi người dùng (Hỗ trợ tìm kiếm cả có dấu/không dấu)
     normalized_q = normalize_vietnamese(q)
     
     # Khởi tạo ngữ cảnh cơ bản
@@ -764,16 +771,18 @@ def chat_api():
     answer = ""
     relevant_docs = []
     
-    # 1. Tìm kiếm tài liệu liên quan trong DOCS (RAG)
+    # Bước 2: Tìm kiếm tài liệu liên quan trong DOCS (RAG)
+    # So sánh normalized_q với normalized_content (đã được làm sạch)
     for fn, info in DOCS.items():
-        # Kiểm tra sự xuất hiện của các từ khóa quan trọng trong câu hỏi đã chuẩn hóa
-        # Ví dụ: "điều lệ đảng" trong "điều lệ đảng là gì"
-        if normalized_q in info.get("normalized_content","")[:15000]: # Giới hạn 15000 ký tự để tìm kiếm nhanh
+        # Kiểm tra normalized_q có xuất hiện trong 10000 ký tự đầu của normalized_content không
+        if normalized_q in info.get("normalized_content","")[:10000]: 
             relevant_docs.append((fn, info))
 
     if relevant_docs:
         # A. Ưu tiên sử dụng tài liệu đã upload (RAG)
+        # Gộp TÓM TẮT của 3 tài liệu liên quan nhất vào ngữ cảnh
         doc_context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant_docs[:3]])
+        
         context += "\n\nNGỮ CẢNH TÀI LIỆU:\n" + doc_context
         answer = openai_answer(q, context)
     else:
@@ -786,7 +795,6 @@ def chat_api():
             answer = openai_answer(q, context)
         else:
             # Không có RAG và không tìm thấy kết quả trên web, dựa vào kiến thức nền
-            # Truyền ngữ cảnh rỗng để kích hoạt prompt system mặc định của AI.
             answer = openai_answer(q) 
 
     user = session["user"]["username"]
