@@ -184,7 +184,8 @@ def serpapi_search(query, num=4):
 # -------------------------
 # Templates
 # -------------------------
-HEADER = f"""
+# ĐÃ SỬA: Bỏ tiền tố 'f' để tránh lỗi SyntaxError với cú pháp Jinja
+HEADER = """
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -194,30 +195,30 @@ HEADER = f"""
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <style>
-        body {{ background: #f8fff8; padding-bottom: 100px; }}
-        .navbar {{ background: #0f5132 !important; }}
-        .footer {{ background: #0f5132; color: white; position: fixed; bottom: 0; width: 100%; padding: 12px 0; text-align: center; font-size: 0.9rem; }}
-        #chat-button {{ position: fixed; right: 20px; bottom: 20px; z-index: 9999; width: 56px; height: 56px; border-radius: 50%; }}
-        #chat-popup {{ position: fixed; right: 20px; bottom: 90px; width: 380px; max-width: 92vw; z-index: 9999; display: none; }}
+        body { background: #f8fff8; padding-bottom: 100px; }
+        .navbar { background: #0f5132 !important; }
+        .footer { background: #0f5132; color: white; position: fixed; bottom: 0; width: 100%; padding: 12px 0; text-align: center; font-size: 0.9rem; }
+        #chat-button { position: fixed; right: 20px; bottom: 20px; z-index: 9999; width: 56px; height: 56px; border-radius: 50%; }
+        #chat-popup { position: fixed; right: 20px; bottom: 90px; width: 380px; max-width: 92vw; z-index: 9999; display: none; }
     </style>
 </head>
 <body>
 <nav class="navbar navbar-dark">
   <div class="container-fluid">
-    <a class="navbar-brand" href="{url_for('dashboard')}">
-      <img src="{LOGO_PATH}" alt="Logo" height="40" class="me-2">
+    <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+      <img src="{}" alt="Logo" height="40" class="me-2">
       HỆ THỐNG QLNS - ĐẢNG VIÊN
     </a>
     {% if session.user %}
     <div class="text-white">
       <i class="bi bi-person-circle"></i> {{ session.user.name }} ({{ session.user.username }})
-      <a href="{url_for('logout')}" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
+      <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
     </div>
     {% endif %}
   </div>
 </nav>
 <div class="container mt-4">
-"""
+""".format(LOGO_PATH) # Sử dụng .format() để chèn biến LOGO_PATH
 
 FOOTER = """
 </div>
@@ -225,7 +226,6 @@ FOOTER = """
     © 2025 HỆ THỐNG QLNS - ĐẢNG VIÊN | Toàn bộ quyền được bảo lưu.
 </div>
 
-<!-- Chat Popup -->
 <button id="chat-button" class="btn btn-success shadow-lg fs-3">Chat</button>
 <div id="chat-popup" class="card shadow-lg">
   <div class="card-header bg-success text-white d-flex justify-content-between">
@@ -531,7 +531,7 @@ def dangvien_panel():
         </div>
       </div></div>
     """ + FOOTER, name=session["user"]["name"], nhanxet=NHAN_XET.get(dv,"Chưa có nhận xét"),
-       sinhoat=SINH_HOAT, chi_bo=CHI_BO_INFO)
+        sinhoat=SINH_HOAT, chi_bo=CHI_BO_INFO)
 
 # ====================== ĐỔI MẬT KHẨU ======================
 @app.route("/change-password", methods=["GET","POST"])
