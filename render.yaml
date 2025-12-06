@@ -5,9 +5,26 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
     envVars:
+      # Khóa OpenAI API (bắt buộc)
       - key: OPENAI_API_KEY
         sync: false
+
+      # Khóa SERPAPI nếu sử dụng search
+      - key: SERPAPI_KEY
+        sync: false
+
+      # Cho phép ghi log ra stdout (Render sẽ hiển thị)
       - key: PYTHONUNBUFFERED
         value: true
+
+      # Tắt embedding để tiết kiệm chi phí nếu không cần
       - key: DISABLE_EMBEDDING
         value: 1
+
+      # URL Database nếu bạn dùng PostgreSQL trên Render
+      - key: DATABASE_URL
+        sync: false
+
+      # Chạy Flask ở chế độ production
+      - key: FLASK_ENV
+        value: production
