@@ -162,22 +162,24 @@ def openai_summarize(text):
 def openai_answer(question, context=""):
     if not OPENAI_AVAILABLE:
         return "AI chưa được cấu hình. (Thiếu OPENAI_API_KEY)"
-    try:
+    
+    # Kiểm tra xem ngữ cảnh có chứa thông tin từ RAG hay Search không
+    has_specific_context = ("NGỮ CẢNH TÀI LIỆU" in context or "NGỮ CẢNH TÌM KIẾM WEB" in context)
+
+    if has_specific_context:
+        # Nếu có ngữ cảnh cụ thể (RAG hoặc Search), ép AI ưu tiên dùng ngữ cảnh đó
         messages = [
-            {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt. CHỈ SỬ DỤNG thông tin được cung cấp trong NGỮ CẢNH để trả lời, không giả định. Nếu không có thông tin, hãy nói không tìm thấy. Nếu là câu hỏi chung (ví dụ: 'MMA khác boxing thế nào'), hãy trả lời bằng kiến thức nền của bạn."},
+            {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt. CHỈ SỬ DỤNG thông tin được cung cấp trong NGỮ CẢNH TÀI LIỆU hoặc TÌM KIẾM WEB để trả lời, không giả định. **Nếu thông tin trong ngữ cảnh không đủ hoặc không liên quan đến câu hỏi, hãy trả lời bằng kiến thức nền của bạn, và thông báo rõ ràng rằng câu trả lời không đến từ tài liệu được cung cấp.**"},
             {"role": "user", "content": f"Ngữ cảnh:\n{context}\n\nCâu hỏi: {question}"}
         ]
-        
-        # Nếu ngữ cảnh là rỗng hoặc chỉ chứa thông tin chi bộ/thông báo lỗi, 
-        # cho phép mô hình dựa vào kiến thức nền.
-        is_context_empty = ("NGỮ CẢNH TÀI LIỆU" not in context and "NGỮ CẢNH TÌM KIẾM WEB" not in context)
-        
-        if is_context_empty:
-            messages = [
-                {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt."},
-                {"role": "user", "content": question}
-            ]
+    else:
+        # Nếu không có ngữ cảnh cụ thể (chỉ có ngữ cảnh chi bộ hoặc rỗng), cho phép AI trả lời bằng kiến thức nền
+        messages = [
+            {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt."},
+            {"role": "user", "content": question}
+        ]
 
+    try:
         resp = OPENAI_CLIENT.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
@@ -190,19 +192,38 @@ def openai_answer(question, context=""):
 
 def serpapi_search(query, num=4):
     if not SERPAPI_KEY: 
+        print("Lỗi: Thiếu SERPAPI_KEY.")
         return ""
     try:
         params = {"engine": "google", "q": query, "hl": "vi", "num": num, "api_key": SERPAPI_KEY}
         r = requests.get("https://serpapi.com/search", params=params, timeout=10)
+        
         if r.status_code != 200: 
+            print(f"Lỗi SerpAPI HTTP: {r.status_code}")
             return ""
+            
         data = r.json()
         snippets = []
+        
+        # 1. Lấy kết quả từ Answer Box (nếu có)
+        if data.get("answer_box"):
+             snippet = data["answer_box"].get("snippet") or data["answer_box"].get("answer")
+             if snippet:
+                 snippets.append(f"• **Câu trả lời trực tiếp từ Google**\n{snippet}\nNguồn: {data['answer_box'].get('source_title', 'Google')}")
+        
+        # 2. Lấy kết quả từ Knowledge Graph (nếu có)
+        if data.get("knowledge_graph"):
+             snippet = data["knowledge_graph"].get("snippet")
+             if snippet:
+                 snippets.append(f"• **Tóm tắt nhanh**\n{snippet}\nNguồn: {data['knowledge_graph'].get('title', 'Google Knowledge Graph')}")
+             
+        # 3. Lấy kết quả Organic
         for item in data.get("organic_results", [])[:num]:
             title = item.get("title", "")
             snippet = item.get("snippet", "")
             link = item.get("link", "")
-            snippets.append(f"• {title}\n{snippet}\nNguồn: {link}")
+            snippets.append(f"• **{title}**\n{snippet}\nNguồn: {link}")
+            
         return "\n\n".join(snippets)
     except Exception as e:
         print(f"Lỗi SerpAPI Search: {e}")
@@ -745,30 +766,28 @@ def chat_api():
     
     # 1. Tìm kiếm tài liệu liên quan trong DOCS (RAG)
     for fn, info in DOCS.items():
-        if normalized_q in info.get("normalized_content",""):
+        # Kiểm tra sự xuất hiện của các từ khóa quan trọng trong câu hỏi đã chuẩn hóa
+        # Ví dụ: "điều lệ đảng" trong "điều lệ đảng là gì"
+        if normalized_q in info.get("normalized_content","")[:15000]: # Giới hạn 15000 ký tự để tìm kiếm nhanh
             relevant_docs.append((fn, info))
 
     if relevant_docs:
         # A. Ưu tiên sử dụng tài liệu đã upload (RAG)
-        doc_context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant_docs[:5]])
+        doc_context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant_docs[:3]])
         context += "\n\nNGỮ CẢNH TÀI LIỆU:\n" + doc_context
         answer = openai_answer(q, context)
     else:
         # B. Nếu không có tài liệu liên quan, thực hiện tìm kiếm web (SerpAPI)
-        if not SERPAPI_KEY:
-            # Nếu thiếu key, chỉ có thể dựa vào kiến thức nền
-            answer = openai_answer(q, "Không có ngữ cảnh bên ngoài. (SerpAPI chưa được cấu hình)")
+        web_search_results = serpapi_search(q)
+        
+        if web_search_results:
+            # Nếu có kết quả search web, sử dụng nó làm ngữ cảnh chính
+            context += "\n\nNGỮ CẢNH TÌM KIẾM WEB:\n" + web_search_results
+            answer = openai_answer(q, context)
         else:
-            # Thực hiện tra cứu web
-            web_search_results = serpapi_search(q)
-            
-            if web_search_results:
-                # Nếu có kết quả search web, sử dụng nó làm ngữ cảnh chính
-                context += "\n\nNGỮ CẢNH TÌM KIẾM WEB:\n" + web_search_results
-                answer = openai_answer(q, context)
-            else:
-                # Không có RAG và không tìm thấy kết quả trên web, dựa vào kiến thức nền
-                answer = openai_answer(q, "Không có ngữ cảnh bên ngoài. (Không tìm thấy thông tin trên tài liệu nội bộ hoặc Internet)")
+            # Không có RAG và không tìm thấy kết quả trên web, dựa vào kiến thức nền
+            # Truyền ngữ cảnh rỗng để kích hoạt prompt system mặc định của AI.
+            answer = openai_answer(q) 
 
     user = session["user"]["username"]
     CHAT_HISTORY.setdefault(user, []).append({"q": q, "a": answer, "time": datetime.now().isoformat()})
