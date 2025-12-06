@@ -56,8 +56,8 @@ LOGO_PATH = "/static/Logo.png"
 # Data storage
 # -------------------------
 USERS = {
-    "admin": {"password": generate_password_hash("Test@123"), "role": "admin", "name": "Quản trị viên"},
-    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
+    "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
+    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ 1"},
     "user_demo": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "User Demo"},
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
 }
@@ -66,7 +66,7 @@ DOCS = {}           # filename -> dict
 CHAT_HISTORY = {}   # username -> list
 NHAN_XET = {}       # dv_code -> text
 SINH_HOAT = []      # list of activities
-CHI_BO_INFO = {"name": "Chi bộ Trường THPT XYZ", "baso": ""}
+CHI_BO_INFO = {"name": "Chi bộ VCB HCM", "baso": ""}
 
 FS_CLIENT = None
 if FIRESTORE_AVAILABLE:
@@ -184,8 +184,8 @@ def serpapi_search(query, num=4):
 # -------------------------
 # Templates
 # -------------------------
-# ĐÃ SỬA: Bỏ tiền tố 'f' để tránh lỗi SyntaxError với cú pháp Jinja
-HEADER = """
+# ĐÃ SỬA LỖI KEYERROR BẰNG CÁCH DÙNG F-STRING VÀ THOÁT DẤU NGOẶC NHỌN CHO CSS & JINJA
+HEADER = f"""
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -195,31 +195,32 @@ HEADER = """
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <style>
-        body { background: #f8fff8; padding-bottom: 100px; }
-        .navbar { background: #0f5132 !important; }
-        .footer { background: #0f5132; color: white; position: fixed; bottom: 0; width: 100%; padding: 12px 0; text-align: center; font-size: 0.9rem; }
-        #chat-button { position: fixed; right: 20px; bottom: 20px; z-index: 9999; width: 56px; height: 56px; border-radius: 50%; }
-        #chat-popup { position: fixed; right: 20px; bottom: 90px; width: 380px; max-width: 92vw; z-index: 9999; display: none; }
+        body {{ background: #f8fff8; padding-bottom: 100px; }}
+        .navbar {{ background: #0f5132 !important; }}
+        .footer {{ background: #0f5132; color: white; position: fixed; bottom: 0; width: 100%; padding: 12px 0; text-align: center; font-size: 0.9rem; }}
+        #chat-button {{ position: fixed; right: 20px; bottom: 20px; z-index: 9999; width: 56px; height: 56px; border-radius: 50%; }}
+        #chat-popup {{ position: fixed; right: 20px; bottom: 90px; width: 380px; max-width: 92vw; z-index: 9999; display: none; }}
     </style>
 </head>
 <body>
 <nav class="navbar navbar-dark">
   <div class="container-fluid">
-    <a class="navbar-brand" href="{{ url_for('dashboard') }}">
-      <img src="{}" alt="Logo" height="40" class="me-2">
+    <a class="navbar-brand" href="{{{url_for('dashboard')}}}">
+      <img src="{LOGO_PATH}" alt="Logo" height="40" class="me-2">
       HỆ THỐNG QLNS - ĐẢNG VIÊN
     </a>
-    {% if session.user %}
+    {{% if session.user %}}
     <div class="text-white">
-      <i class="bi bi-person-circle"></i> {{ session.user.name }} ({{ session.user.username }})
-      <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
+      <i class="bi bi-person-circle"></i> {{{session.user.name}}} ({{{session.user.username}}})
+      <a href="{{{url_for('logout')}}}" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
     </div>
-    {% endif %}
+    {{% endif %}}
   </div>
 </nav>
 <div class="container mt-4">
-""".format(LOGO_PATH) # Sử dụng .format() để chèn biến LOGO_PATH
+"""
 
+# FOOTER cũng đã được sửa để tránh lỗi tương tự nếu có
 FOOTER = """
 </div>
 <div class="footer">
@@ -384,7 +385,7 @@ def admin_add_user():
                 "role": role,
                 "name": name
             }
-            flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
+            #flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
             return redirect(url_for("admin_panel"))
     return render_template_string(HEADER + """
     <h4>Thêm người dùng mới</h4>
@@ -436,7 +437,7 @@ def admin_edit_user(username):
 def admin_reset_pass(username):
     if username in USERS:
         USERS[username]["password"] = generate_password_hash("Test@123")
-        flash(f"Đã reset mật khẩu {username} về Test@123", "success")
+        #flash(f"Đã reset mật khẩu {username} về Test@123", "success")
     return redirect(url_for("admin_panel"))
 
 @app.route("/admin/delete/<username>")
@@ -550,7 +551,7 @@ def change_password():
             flash("Mật khẩu phải ≥8 ký tự, có chữ hoa, thường, số và ký tự đặc biệt", "danger")
         else:
             USERS[session["user"]["username"]]["password"] = generate_password_hash(new1)
-            flash("Đổi mật khẩu thành công!", "success")
+            #flash("Đổi mật khẩu thành công!", "success")
             return redirect(url_for("dashboard"))
     return render_template_string(HEADER + """
     <h4>Đổi mật khẩu</h4>
@@ -583,7 +584,7 @@ def upload():
                     try:
                         FS_CLIENT.collection("docs").document(filename).set(DOCS[filename])
                     except: pass
-                flash("Upload và tóm tắt thành công!", "success")
+                #flash("Upload và tóm tắt thành công!", "success")
             else:
                 flash("File không được phép", "danger")
 
