@@ -55,7 +55,7 @@ LOGO_PATH = "/static/Logo.png"
 # Data storage
 # -------------------------
 USERS = {
-    "admin": {"password": generate_password_hash("Test@123"), "role": "admin", "name": "Quản trị viên"},
+    "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
     "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
     "user_demo": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "User Demo"},
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
@@ -65,7 +65,9 @@ DOCS = {}           # filename -> dict
 CHAT_HISTORY = {}   # username -> list
 NHAN_XET = {}       # dv_code -> text
 SINH_HOAT = []      # list of activities
-CHI_BO_INFO = {"name": "Chi bộ Trường THPT XYZ", "baso": ""}
+
+# SỬA LỖI 1: Thay đổi tên Chi bộ mặc định
+CHI_BO_INFO = {"name": "Chi bộ 1", "baso": ""}
 
 FS_CLIENT = None
 if FIRESTORE_AVAILABLE:
@@ -142,8 +144,9 @@ def openai_summarize(text):
             temperature=0.3
         )
         return resp.choices[0].message.content.strip()
-    except Exception:
-        return "Lỗi tóm tắt bằng AI."
+    # CẬP NHẬT LỖI 2: Hiển thị thông báo lỗi chi tiết
+    except Exception as e:
+        return f"Lỗi tóm tắt bằng AI: {str(e)}"
 
 def openai_answer(question, context=""):
     if not OPENAI_AVAILABLE:
@@ -160,8 +163,9 @@ def openai_answer(question, context=""):
             temperature=0.2
         )
         return resp.choices[0].message.content.strip()
-    except Exception:
-        return "Lỗi khi gọi AI."
+    # CẬP NHẬT LỖI 2: Hiển thị thông báo lỗi chi tiết
+    except Exception as e:
+        return f"Lỗi khi gọi AI: {str(e)}"
 
 def serpapi_search(query, num=4):
     if not SERPAPI_KEY: return ""
@@ -183,7 +187,6 @@ def serpapi_search(query, num=4):
 # -------------------------
 # Templates
 # -------------------------
-# ĐÃ SỬA LỖI KEYERROR VÀ APPLICATION CONTEXT
 HEADER = f"""
 <!DOCTYPE html>
 <html lang="vi">
@@ -204,7 +207,8 @@ HEADER = f"""
 <body>
 <nav class="navbar navbar-dark">
   <div class="container-fluid">
-    <a class="navbar-brand" href="/dashboard">  <img src="{LOGO_PATH}" alt="Logo" height="40" class="me-2">
+    <a class="navbar-brand" href="/dashboard">
+      <img src="{LOGO_PATH}" alt="Logo" height="40" class="me-2">
       HỆ THỐNG QLNS - ĐẢNG VIÊN
     </a>
     {{% if session.user %}}
@@ -218,7 +222,6 @@ HEADER = f"""
 <div class="container mt-4">
 """
 
-# FOOTER cũng đã được sửa để tránh lỗi tương tự nếu có
 FOOTER = """
 </div>
 <div class="footer">
@@ -383,7 +386,7 @@ def admin_add_user():
                 "role": role,
                 "name": name
             }
-            flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
+            #flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
             return redirect(url_for("admin_panel"))
     return render_template_string(HEADER + """
     <h4>Thêm người dùng mới</h4>
@@ -435,7 +438,7 @@ def admin_edit_user(username):
 def admin_reset_pass(username):
     if username in USERS:
         USERS[username]["password"] = generate_password_hash("Test@123")
-        flash(f"Đã reset mật khẩu {username} về Test@123", "success")
+        #flash(f"Đã reset mật khẩu {username} về Test@123", "success")
     return redirect(url_for("admin_panel"))
 
 @app.route("/admin/delete/<username>")
@@ -461,7 +464,7 @@ def chi_bo_panel():
     <div class="row"><div class="col-md-7">
         <form method="post" action="{{url_for('chi_bo_update')}}">
           <div class="mb-3"><label class="form-label">Mã số Chi bộ (baso)</label>
-            <input name="baso" class="form-control" value="{{chi_bo.baso}}"></div>
+            <input name="baso" class="form-control" value="{{chi_bo.baso or ''}}"></div>
           <div class="mb-3"><label class="form-label">Thêm hoạt động sinh hoạt chi bộ</label>
             <textarea name="hoatdong" class="form-control" rows="3"></textarea></div>
           <button class="btn btn-success">Lưu / Thêm hoạt động</button>
@@ -549,7 +552,7 @@ def change_password():
             flash("Mật khẩu phải ≥8 ký tự, có chữ hoa, thường, số và ký tự đặc biệt", "danger")
         else:
             USERS[session["user"]["username"]]["password"] = generate_password_hash(new1)
-            flash("Đổi mật khẩu thành công!", "success")
+            #flash("Đổi mật khẩu thành công!", "success")
             return redirect(url_for("dashboard"))
     return render_template_string(HEADER + """
     <h4>Đổi mật khẩu</h4>
@@ -582,7 +585,7 @@ def upload():
                     try:
                         FS_CLIENT.collection("docs").document(filename).set(DOCS[filename])
                     except: pass
-                flash("Upload và tóm tắt thành công!", "success")
+                #flash("Upload và tóm tắt thành công!", "success")
             else:
                 flash("File không được phép", "danger")
 
@@ -649,6 +652,14 @@ def chat_api():
     if not q:
         return {"error": "Câu hỏi rỗng"}, 400
 
+    # CẬP NHẬT LỖI 3: Thêm thông tin Chi bộ vào ngữ cảnh
+    chi_bo_context = f"""
+    NGỮ CẢNH CHI BỘ:
+    Tên chi bộ: {CHI_BO_INFO.get('name', 'N/A')}. 
+    Mã số chi bộ (baso): {CHI_BO_INFO.get('baso', 'Chưa thiết lập')}.
+    """
+    context = chi_bo_context
+
     relevant = []
     q_lower = q.lower()
     for fn, info in DOCS.items():
@@ -656,11 +667,15 @@ def chat_api():
             relevant.append((fn, info))
 
     if relevant:
-        context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant[:5]])
+        doc_context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant[:5]])
+        context += "\n\nNGỮ CẢNH TÀI LIỆU:\n" + doc_context
         answer = openai_answer(q, context)
     else:
         web = serpapi_search(q)
-        answer = openai_answer(q, f"Kết quả tìm kiếm web:\n{web}") if web and OPENAI_AVAILABLE else (web or "Không tìm thấy thông tin.")
+        if web:
+            context += "\n\nNGỮ CẢNH TÌM KIẾM WEB:\n" + web
+        
+        answer = openai_answer(q, context) if OPENAI_AVAILABLE else (web or "Không tìm thấy thông tin.")
 
     user = session["user"]["username"]
     CHAT_HISTORY.setdefault(user, []).append({"q": q, "a": answer, "time": datetime.now().isoformat()})
