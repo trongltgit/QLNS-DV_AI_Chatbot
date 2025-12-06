@@ -30,7 +30,7 @@ try:
 except Exception:
     pd = None
 
-# SỬA LỖI 1: Cập nhật cách khởi tạo OpenAI Client (từ 0.x.x sang 1.x.x)
+# Cập nhật cách khởi tạo OpenAI Client (từ 0.x.x sang 1.x.x)
 try:
     import openai
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -133,7 +133,6 @@ def firestore_get(collection_name):
     except Exception:
         return []
 
-# SỬA LỖI 2: Cập nhật hàm openai_summarize để dùng OPENAI_CLIENT
 def openai_summarize(text):
     if not OPENAI_AVAILABLE or not text.strip():
         return "Không thể tóm tắt (thiếu OpenAI hoặc nội dung rỗng)."
@@ -148,13 +147,11 @@ def openai_summarize(text):
     except Exception as e:
         return f"Lỗi tóm tắt bằng AI: {str(e)}"
 
-# SỬA LỖI 3: Cập nhật hàm openai_answer để dùng OPENAI_CLIENT
 def openai_answer(question, context=""):
     if not OPENAI_AVAILABLE:
         return "AI chưa được cấu hình. (Thiếu OPENAI_API_KEY)"
     try:
         messages = [
-            # Thêm hướng dẫn RAG: CHỈ SỬ DỤNG thông tin ngữ cảnh để đảm bảo kết quả "thật"
             {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt. CHỈ SỬ DỤNG thông tin được cung cấp trong NGỮ CẢNH để trả lời, không giả định. Nếu không có thông tin, hãy nói không tìm thấy."},
             {"role": "user", "content": f"Ngữ cảnh:\n{context}\n\nCâu hỏi: {question}"}
         ]
@@ -169,11 +166,13 @@ def openai_answer(question, context=""):
         return f"Lỗi khi gọi AI: {str(e)}"
 
 def serpapi_search(query, num=4):
-    if not SERPAPI_KEY: return ""
+    if not SERPAPI_KEY: 
+        return ""
     try:
         params = {"engine": "google", "q": query, "hl": "vi", "num": num, "api_key": SERPAPI_KEY}
         r = requests.get("https://serpapi.com/search", params=params, timeout=10)
-        if r.status_code != 200: return ""
+        if r.status_code != 200: 
+            return ""
         data = r.json()
         snippets = []
         for item in data.get("organic_results", [])[:num]:
@@ -182,11 +181,12 @@ def serpapi_search(query, num=4):
             link = item.get("link", "")
             snippets.append(f"• {title}\n{snippet}\nNguồn: {link}")
         return "\n\n".join(snippets)
-    except Exception:
+    except Exception as e:
+        print(f"Lỗi SerpAPI Search: {e}")
         return ""
 
 # -------------------------
-# Templates (Cập nhật FOOTER để thêm nút Xóa lịch sử Chat)
+# Templates (ĐÃ CẬP NHẬT HEADER VỚI NÚT ĐỔI MẬT KHẨU)
 # -------------------------
 HEADER = f"""
 <!DOCTYPE html>
@@ -203,18 +203,21 @@ HEADER = f"""
         .footer {{ background: #0f5132; color: white; position: fixed; bottom: 0; width: 100%; padding: 12px 0; text-align: center; font-size: 0.9rem; }}
         #chat-button {{ position: fixed; right: 20px; bottom: 20px; z-index: 9999; width: 56px; height: 56px; border-radius: 50%; }}
         #chat-popup {{ position: fixed; right: 20px; bottom: 90px; width: 380px; max-width: 92vw; z-index: 9999; display: none; }}
+        .chat-msg {{ margin-bottom: 5px; }}
     </style>
 </head>
 <body>
 <nav class="navbar navbar-dark">
   <div class="container-fluid">
-    <a class="navbar-brand" href="/dashboard">
+    <a class="navbar-brand" href="{{{{ url_for('dashboard') }}}}">
       <img src="{LOGO_PATH}" alt="Logo" height="40" class="me-2">
       HỆ THỐNG QLNS - ĐẢNG VIÊN
     </a>
     {{% if session.user %}}
     <div class="text-white">
       <i class="bi bi-person-circle"></i> {{{{ session.user.name }}}} ({{{{ session.user.username }}}})
+      <a href="{{{{ url_for('change_password') }}}}" class="btn btn-outline-light btn-sm ms-3"><i class="bi bi-key"></i> Đổi mật khẩu</a>
+      <a href="{{{{ url_for('upload') }}}}" class="btn btn-outline-light btn-sm ms-3"><i class="bi bi-cloud-arrow-up"></i> Tải tài liệu</a>
       <a href="{{{{ url_for('logout') }}}}" class="btn btn-outline-light btn-sm ms-3">Đăng xuất</a>
     </div>
     {{% endif %}}
@@ -274,8 +277,10 @@ async function sendQuestion(q) {
     const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:q})});
     const j = await r.json();
     removeLastBot();
-    addMsg((j.answer || j.error || 'Lỗi').replace(/\\n/g, '<br>'), 'bot');
-  } catch(e) { removeLastBot(); addMsg('Lỗi kết nối', 'bot'); }
+    // Đảm bảo nội dung được hiển thị đúng
+    const answerText = (j.answer || j.error || 'Lỗi: Không thể lấy câu trả lời từ server.').replace(/\\n/g, '<br>');
+    addMsg(answerText, 'bot');
+  } catch(e) { removeLastBot(); addMsg('Lỗi kết nối hoặc server.', 'bot'); }
 }
 function addMsg(text, sender, isSystem=false) {
   const div = document.createElement('div');
@@ -353,7 +358,7 @@ def dashboard():
     if role == "bithu": return redirect(url_for("chi_bo_panel"))
     return redirect(url_for("dangvien_panel"))
 
-# ====================== ADMIN PANEL HOÀN CHỈNH ======================
+# ====================== ADMIN PANEL ======================
 @app.route("/admin")
 @admin_required
 def admin_panel():
@@ -555,7 +560,7 @@ def dangvien_panel():
     """ + FOOTER, name=session["user"]["name"], nhanxet=NHAN_XET.get(dv,"Chưa có nhận xét"),
         sinhoat=SINH_HOAT, chi_bo=CHI_BO_INFO)
 
-# ====================== ĐỔI MẬT KHẨU ======================
+# ====================== ĐỔI MẬT KHẨU (ROUTE) ======================
 @app.route("/change-password", methods=["GET","POST"])
 @login_required()
 def change_password():
@@ -576,6 +581,9 @@ def change_password():
             return redirect(url_for("dashboard"))
     return render_template_string(HEADER + """
     <h4>Đổi mật khẩu</h4>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+    {% endwith %}
     <form method="post" class="col-md-5">
       <div class="mb-3"><input type="password" name="old" class="form-control" placeholder="Mật khẩu cũ" required></div>
       <div class="mb-3"><input type="password" name="new1" class="form-control" placeholder="Mật khẩu mới" required></div>
@@ -615,7 +623,7 @@ def upload():
             all_docs[doc_id] = data
 
     return render_template_string(HEADER + """
-    <h3>Upload tài liệu</h3>
+    <h3>Upload tài liệu <i class="bi bi-file-earmark-arrow-up"></i></h3>
     <form method="post" enctype="multipart/form-data" class="mb-4">
       <input type="file" name="file" class="form-control w-50 d-inline" required>
       <button class="btn btn-success ms-2">Tải lên</button>
@@ -637,7 +645,6 @@ def upload():
       <tr><td colspan="4">Chưa có tài liệu</td></tr>
       {% endfor %}
     </table>
-    <p><a href="{{url_for('change_password')}}" class="btn btn-outline-secondary">Đổi mật khẩu</a></p>
     """ + FOOTER, docs=all_docs)
 
 @app.route("/doc/<fn>")
@@ -670,41 +677,48 @@ def chat_api():
     data = request.get_json() or {}
     q = data.get("question","").strip()
     if not q:
-        return {"error": "Câu hỏi rỗng"}, 400
+        return jsonify({"error": "Câu hỏi rỗng"}), 400
 
-    # Thêm thông tin Chi bộ vào ngữ cảnh
-    chi_bo_context = f"""
+    # Khởi tạo ngữ cảnh
+    context = f"""
     NGỮ CẢNH CHI BỘ:
     Tên chi bộ: {CHI_BO_INFO.get('name', 'N/A')}. 
     Mã số chi bộ (baso): {CHI_BO_INFO.get('baso', 'Chưa thiết lập')}.
     """
-    context = chi_bo_context
-
+    
+    answer = ""
     relevant = []
     q_lower = q.lower()
-    # Tìm kiếm tài liệu liên quan trong DOCS
+    # 1. Tìm kiếm tài liệu liên quan trong DOCS
     for fn, info in DOCS.items():
+        # Tìm trong nội dung hoặc tóm tắt
         if q_lower in info.get("content","").lower() or q_lower in info.get("summary","").lower():
             relevant.append((fn, info))
 
     if relevant:
-        # Ưu tiên sử dụng tài liệu đã upload (RAG)
+        # A. Ưu tiên sử dụng tài liệu đã upload (RAG)
         doc_context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant[:5]])
         context += "\n\nNGỮ CẢNH TÀI LIỆU:\n" + doc_context
         answer = openai_answer(q, context)
     else:
-        # Nếu không có tài liệu liên quan, dùng tìm kiếm web
+        # B. Nếu không có tài liệu liên quan, thực hiện tìm kiếm web (SerpAPI)
         web = serpapi_search(q)
         if web:
             context += "\n\nNGỮ CẢNH TÌM KIẾM WEB:\n" + web
-        
-        answer = openai_answer(q, context) if OPENAI_AVAILABLE else (web or "Không tìm thấy thông tin.")
+            # Gọi OpenAI với ngữ cảnh tìm kiếm web để trả lời
+            answer = openai_answer(q, context)
+        else:
+            # C. Nếu không có cả dữ liệu cục bộ lẫn kết quả search web
+            if OPENAI_AVAILABLE:
+                # Nếu OpenAI có, vẫn cố gắng hỏi nó (nó có thể biết)
+                answer = openai_answer(q, "Không có ngữ cảnh bên ngoài.")
+            else:
+                answer = "Không tìm thấy thông tin liên quan từ tài liệu nội bộ hoặc Internet. (Thiếu SerpAPI hoặc OpenAI)."
 
     user = session["user"]["username"]
     CHAT_HISTORY.setdefault(user, []).append({"q": q, "a": answer, "time": datetime.now().isoformat()})
     return jsonify({"answer": answer})
 
-# SỬA LỖI 4: Thêm API xóa lịch sử chat
 @app.route("/api/chat/clear", methods=["POST"])
 @login_required()
 def chat_clear():
