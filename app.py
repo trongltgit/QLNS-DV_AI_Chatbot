@@ -1,13 +1,12 @@
-# app.py - HỆ THỐNG QUẢN LÝ ĐẢNG VIÊN & TÀI LIỆU CHI BỘ (2025)
+# app.py - HỆ THỐNG QUẢN LÝ ĐẢNG VIÊN & TÀI LIỆU CHI BỘ (2025) - PHIÊN BẢN HOÀN CHỈNH
 import os
 import re
-import json
 import requests
 from datetime import datetime
 from functools import wraps
 from flask import (
     Flask, request, redirect, url_for, render_template_string,
-    session, abort, send_from_directory, flash
+    session, abort, send_from_directory, flash, get_flashed_messages
 )
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -54,7 +53,7 @@ ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
 LOGO_PATH = "/static/Logo.png"
 
 # -------------------------
-# Data storage (in-memory + Firestore fallback)
+# Data storage
 # -------------------------
 USERS = {
     "admin": {"password": generate_password_hash("Test@123"), "role": "admin", "name": "Quản trị viên"},
@@ -64,7 +63,7 @@ USERS = {
 }
 
 DOCS = {}           # filename -> dict
-CHAT_HISTORY = {}   # username -> list of dicts
+CHAT_HISTORY = {}   # username -> list
 NHAN_XET = {}       # dv_code -> text
 SINH_HOAT = []      # list of activities
 CHI_BO_INFO = {"name": "Chi bộ Trường THPT XYZ", "baso": ""}
@@ -117,8 +116,8 @@ def read_file_text(path):
         if ext in ("csv", "xlsx") and pd:
             df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
             return df.head(30).to_string()
-    except Exception as e:
-        print(e)
+    except Exception:
+        pass
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()[:30000]
@@ -144,8 +143,8 @@ def openai_summarize(text):
             temperature=0.3
         )
         return resp.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Lỗi tóm tắt: {str(e)[:100]}"
+    except Exception:
+        return "Lỗi tóm tắt bằng AI."
 
 def openai_answer(question, context=""):
     if not OPENAI_AVAILABLE:
@@ -183,7 +182,7 @@ def serpapi_search(query, num=4):
         return ""
 
 # -------------------------
-# Templates (Header & Footer)
+# Templates
 # -------------------------
 HEADER = f"""
 <!DOCTYPE html>
@@ -200,9 +199,6 @@ HEADER = f"""
         .footer {{ background: #0f5132; color: white; position: fixed; bottom: 0; width: 100%; padding: 12px 0; text-align: center; font-size: 0.9rem; }}
         #chat-button {{ position: fixed; right: 20px; bottom: 20px; z-index: 9999; width: 56px; height: 56px; border-radius: 50%; }}
         #chat-popup {{ position: fixed; right: 20px; bottom: 90px; width: 380px; max-width: 92vw; z-index: 9999; display: none; }}
-        .chat-msg {{ margin: 8px 0; }}
-        .from-user {{ text-align: right; }}
-        .from-bot {{ text-align: left; }}
     </style>
 </head>
 <body>
@@ -229,7 +225,7 @@ FOOTER = """
     © 2025 HỆ THỐNG QLNS - ĐẢNG VIÊN | Toàn bộ quyền được bảo lưu.
 </div>
 
-<!-- Chat Button & Popup -->
+<!-- Chat Popup -->
 <button id="chat-button" class="btn btn-success shadow-lg fs-3">Chat</button>
 <div id="chat-popup" class="card shadow-lg">
   <div class="card-header bg-success text-white d-flex justify-content-between">
@@ -259,13 +255,13 @@ async function sendQuestion(q) {
     const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:q})});
     const j = await r.json();
     removeLastBot();
-    addMsg(j.answer || j.error || 'Lỗi', 'bot');
+    addMsg((j.answer || j.error || 'Lỗi').replace(/\\n/g, '<br>'), 'bot');
   } catch(e) { removeLastBot(); addMsg('Lỗi kết nối', 'bot'); }
 }
 function addMsg(text, sender) {
   const div = document.createElement('div');
   div.className = 'chat-msg ' + (sender==='user'?'text-end':'');
-  div.innerHTML = `<small class="text-muted">${sender==='user'?'Bạn':'AI'}</small><div class="p-2 rounded ${sender==='user'?'bg-primary text-white':'bg-light'} d-inline-block">${text.replace(/\\n/g,'<br>')}</div>`;
+  div.innerHTML = `<small class="text-muted">${sender==='user'?'Bạn':'AI'}</small><div class="p-2 rounded ${sender==='user'?'bg-primary text-white':'bg-light'} d-inline-block">${text}</div>`;
   document.getElementById('chat-messages').appendChild(div);
   div.scrollIntoView();
 }
@@ -288,7 +284,7 @@ def index():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
+        username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         user = USERS.get(username)
         if user and check_password_hash(user["password"], password):
@@ -335,66 +331,105 @@ def dashboard():
     if role == "bithu": return redirect(url_for("chi_bo_panel"))
     return redirect(url_for("dangvien_panel"))
 
-# -------------------------
-# Admin Panel
-# -------------------------
+# ====================== ADMIN PANEL HOÀN CHỈNH ======================
 @app.route("/admin")
 @admin_required
 def admin_panel():
     return render_template_string(HEADER + """
     <h3 class="text-success"><i class="bi bi-shield-lock"></i> Quản trị hệ thống</h3>
-    <div class="row">
-      <div class="col-md-8">
-        <table class="table table-bordered table-hover">
-          <thead class="table-success"><tr><th>TK</th><th>Họ tên</th><th>Vai trò</th><th>Hành động</th></tr></thead>
-          <tbody>
-          {% for u,info in users.items() %}
-            <tr>
-              <td><strong>{{u}}</strong></td>
-              <td>{{info.name}}</td>
-              <td>{{'Quản trị' if info.role=='admin' else 'Bí thư' if info.role=='bithu' else 'Đảng viên'}}</td>
-              <td>
-                <a href="{{url_for('admin_edit_user', username=u)}}" class="btn btn-sm btn-warning">Sửa</a>
-                <a href="{{url_for('admin_reset_pass', username=u)}}" class="btn btn-sm btn-danger" onclick="return confirm('Reset mật khẩu về Test@123?')">Reset MK</a>
-              </td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5>Danh sách người dùng</h5>
         <a href="{{url_for('admin_add_user')}}" class="btn btn-success"><i class="bi bi-plus-lg"></i> Thêm người dùng</a>
-      </div>
     </div>
+
+    <table class="table table-bordered table-hover align-middle">
+      <thead class="table-success">
+        <tr><th>Tài khoản</th><th>Họ tên</th><th>Vai trò</th><th class="text-center">Hành động</th></tr>
+      </thead>
+      <tbody>
+      {% for u,info in users.items() %}
+        <tr>
+          <td><strong>{{u}}</strong></td>
+          <td>{{info.name}}</td>
+          <td>{% if info.role=='admin' %}Quản trị viên{% elif info.role=='bithu' %}Bí thư Chi bộ{% else %}Đảng viên{% endif %}</td>
+          <td class="text-center">
+            <a href="{{url_for('admin_edit_user', username=u)}}" class="btn btn-sm btn-warning">Sửa</a>
+            <a href="{{url_for('admin_reset_pass', username=u)}}" class="btn btn-sm btn-outline-danger"
+               onclick="return confirm('Reset mật khẩu của {{u}} về Test@123?')">Reset MK</a>
+            {% if u != 'admin' %}
+            <a href="{{url_for('admin_delete_user', username=u)}}" class="btn btn-sm btn-danger"
+               onclick="return confirm('XÓA HOÀN TOÀN tài khoản {{u}} ({{info.name}})? Không thể hoàn tác!')">Xóa</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
     """ + FOOTER, users=USERS)
 
 @app.route("/admin/add", methods=["GET","POST"])
 @admin_required
 def admin_add_user():
     if request.method == "POST":
-        username = request.form["username"].strip()
+        username = request.form["username"].strip().lower()
         name = request.form["name"].strip()
         role = request.form["role"]
         if username in USERS:
-            flash("Tài khoản đã tồn tại", "danger")
+            flash("Tài khoản đã tồn tại!", "danger")
+        elif not username or not name:
+            flash("Vui lòng nhập đầy đủ thông tin", "danger")
         else:
-            USERS[username] = {"password": generate_password_hash("Test@123"), "role": role, "name": name}
-            flash("Thêm thành công. Mật khẩu mặc định: Test@123", "success")
+            USERS[username] = {
+                "password": generate_password_hash("Test@123"),
+                "role": role,
+                "name": name
+            }
+            flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
             return redirect(url_for("admin_panel"))
     return render_template_string(HEADER + """
     <h4>Thêm người dùng mới</h4>
     <form method="post" class="col-md-5">
-      <div class="mb-3"><input name="username" class="form-control" placeholder="Tài khoản" required></div>
-      <div class="mb-3"><input name="name" class="form-control" placeholder="Họ tên" required></div>
+      <div class="mb-3"><input name="username" class="form-control" placeholder="Tài khoản (vd: dv02)" required></div>
+      <div class="mb-3"><input name="name" class="form-control" placeholder="Họ và tên" required></div>
       <div class="mb-3">
-        <select name="role" class="form-select">
+        <select name="role" class="form-select" required>
           <option value="dangvien">Đảng viên</option>
-          <option value="bithu">Bí thư</option>
-          <option value="admin">Quản trị</option>
+          <option value="bithu">Bí thư Chi bộ</option>
+          <option value="admin">Quản trị viên</option>
         </select>
       </div>
-      <button class="btn btn-success">Thêm</button>
-      <a href="{{url_for('admin_panel')}}" class="btn btn-secondary">Quay lại</a>
+      <button class="btn btn-success">Thêm người dùng</button>
+      <a href="{{url_for('admin_panel')}}" class="btn btn-secondary ms-2">Quay lại</a>
     </form>
     """ + FOOTER)
+
+@app.route("/admin/edit/<username>", methods=["GET","POST"])
+@admin_required
+def admin_edit_user(username):
+    if username not in USERS:
+        flash("Người dùng không tồn tại", "danger")
+        return redirect(url_for("admin_panel"))
+    if request.method == "POST":
+        USERS[username]["name"] = request.form["name"].strip()
+        USERS[username]["role"] = request.form["role"]
+        flash("Cập nhật thành công!", "success")
+        return redirect(url_for("admin_panel"))
+    user = USERS[username]
+    return render_template_string(HEADER + """
+    <h4>Sửa thông tin: {{username}}</h4>
+    <form method="post" class="col-md-5">
+      <div class="mb-3"><input name="name" class="form-control" value="{{user.name}}" required></div>
+      <div class="mb-3">
+        <select name="role" class="form-select">
+          <option value="dangvien" {% if user.role=='dangvien' %}selected{% endif %}>Đảng viên</option>
+          <option value="bithu" {% if user.role=='bithu' %}selected{% endif %}>Bí thư Chi bộ</option>
+          <option value="admin" {% if user.role=='admin' %}selected{% endif %}>Quản trị viên</option>
+        </select>
+      </div>
+      <button class="btn btn-success">Lưu thay đổi</button>
+      <a href="{{url_for('admin_panel')}}" class="btn btn-secondary ms-2">Hủy</a>
+    </form>
+    """ + FOOTER, username=username, user=user)
 
 @app.route("/admin/reset/<username>")
 @admin_required
@@ -404,48 +439,43 @@ def admin_reset_pass(username):
         flash(f"Đã reset mật khẩu {username} về Test@123", "success")
     return redirect(url_for("admin_panel"))
 
-# -------------------------
-# Bí thư Chi bộ
-# -------------------------
+@app.route("/admin/delete/<username>")
+@admin_required
+def admin_delete_user(username):
+    if username == "admin":
+        flash("Không thể xóa tài khoản admin chính!", "danger")
+    elif username in USERS:
+        del USERS[username]
+        NHAN_XET.pop(username, None)
+        CHAT_HISTORY.pop(username, None)
+        flash(f"Đã xóa hoàn toàn tài khoản {username}", "success")
+    else:
+        flash("Không tìm thấy người dùng", "danger")
+    return redirect(url_for("admin_panel"))
+
+# ====================== BÍ THƯ CHI BỘ ======================
 @app.route("/chi-bo")
 @login_required("bithu")
 def chi_bo_panel():
     return render_template_string(HEADER + """
-    <h3 class="text-success"><i class="bi bi-building"></i> Trang Bí thư Chi bộ</h3>
-    <div class="row">
-      <div class="col-md-7">
+    <h3 class="text-success">Trang Bí thư Chi bộ</h3>
+    <div class="row"><div class="col-md-7">
         <form method="post" action="{{url_for('chi_bo_update')}}">
-          <div class="mb-3">
-            <label class="form-label">Mã số Chi bộ (baso)</label>
-            <input name="baso" class="form-control" value="{{chi_bo.baso}}">
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Thêm hoạt động sinh hoạt chi bộ</label>
-            <textarea name="hoatdong" class="form-control" rows="3"></textarea>
-          </div>
+          <div class="mb-3"><label class="form-label">Mã số Chi bộ (baso)</label>
+            <input name="baso" class="form-control" value="{{chi_bo.baso}}"></div>
+          <div class="mb-3"><label class="form-label">Thêm hoạt động sinh hoạt chi bộ</label>
+            <textarea name="hoatdong" class="form-control" rows="3"></textarea></div>
           <button class="btn btn-success">Lưu / Thêm hoạt động</button>
         </form>
-      </div>
-    </div>
-
-    <h5 class="mt-4">Hoạt động chi bộ</h5>
-    <ol>
-      {% for a in sinhoat %}
-        <li>{{a}}</li>
-      {% else %}
-        <li class="text-muted">Chưa có hoạt động</li>
-      {% endfor %}
+      </div></div>
+    <h5 class="mt-4">Hoạt động chi bộ</h5><ol>
+      {% for a in sinhoat %}<li>{{a}}</li>{% else %}<li class="text-muted">Chưa có hoạt động</li>{% endfor %}
     </ol>
-
     <h5 class="mt-4">Nhận xét Đảng viên</h5>
     <div class="list-group">
       {% for u,info in users.items() if info.role == 'dangvien' %}
-        <a href="{{url_for('nhanxet_edit', dv=u)}}" class="list-group-item list-group-item-action">
-          {{info.name}} ({{u}})
-        </a>
-      {% else %}
-        <p class="text-muted">Chưa có đảng viên nào.</p>
-      {% endfor %}
+        <a href="{{url_for('nhanxet_edit', dv=u)}}" class="list-group-item list-group-item-action">{{info.name}} ({{u}})</a>
+      {% else %}<p class="text-muted">Chưa có đảng viên nào.</p>{% endfor %}
     </div>
     """ + FOOTER, users=USERS, chi_bo=CHI_BO_INFO, sinhoat=SINH_HOAT)
 
@@ -474,37 +504,24 @@ def nhanxet_edit(dv):
     </form>
     """ + FOOTER, name=USERS[dv]["name"], nhanxet=NHAN_XET.get(dv,""))
 
-# -------------------------
-# Đảng viên
-# -------------------------
+# ====================== ĐẢNG VIÊN ======================
 @app.route("/dangvien")
 @login_required("dangvien")
 def dangvien_panel():
     dv = session["user"]["username"]
     return render_template_string(HEADER + """
     <h3>Xin chào Đảng viên <strong>{{name}}</strong></h3>
-    <div class="row">
-      <div class="col-md-8">
+    <div class="row"><div class="col-md-8">
         <div class="card mb-3">
           <div class="card-header bg-success text-white">Nhận xét của Bí thư</div>
-          <div class="card-body">
-            {{nhanxet or "Chưa có nhận xét từ Bí thư."}}
-          </div>
+          <div class="card-body">{{nhanxet or "Chưa có nhận xét từ Bí thư."}}</div>
         </div>
-
         <div class="card mb-3">
           <div class="card-header bg-success text-white">Hoạt động chi bộ</div>
-          <div class="card-body">
-            <ol>
-              {% for a in sinhoat %}
-                <li>{{a}}</li>
-              {% else %}
-                <li>Chưa có hoạt động</li>
-              {% endfor %}
-            </ol>
-          </div>
+          <div class="card-body"><ol>
+            {% for a in sinhoat %}<li>{{a}}</li>{% else %}<li>Chưa có hoạt động</li>{% endfor %}
+          </ol></div>
         </div>
-
         <div class="card">
           <div class="card-header bg-success text-white">Thông tin chi bộ</div>
           <div class="card-body">
@@ -512,14 +529,11 @@ def dangvien_panel():
             <p><strong>Mã số chi bộ:</strong> {{chi_bo.baso or "Chưa thiết lập"}}</p>
           </div>
         </div>
-      </div>
-    </div>
-    """ + FOOTER, name=session["user"]["name"], nhanxet=NHAN_XET.get(dv,"<em>Chưa có nhận xét</em>"),
+      </div></div>
+    """ + FOOTER, name=session["user"]["name"], nhanxet=NHAN_XET.get(dv,"Chưa có nhận xét"),
        sinhoat=SINH_HOAT, chi_bo=CHI_BO_INFO)
 
-# -------------------------
-# Đổi mật khẩu (tất cả user)
-# -------------------------
+# ====================== ĐỔI MẬT KHẨU ======================
 @app.route("/change-password", methods=["GET","POST"])
 @login_required()
 def change_password():
@@ -548,16 +562,13 @@ def change_password():
     </form>
     """ + FOOTER)
 
-# -------------------------
-# Upload & Document Management
-# -------------------------
+# ====================== UPLOAD TÀI LIỆU ======================
 @app.route("/upload", methods=["GET","POST"])
 @login_required()
 def upload():
-    msg = ""
     if request.method == "POST":
         if "file" not in request.files:
-            msg = "Chưa chọn file"
+            flash("Chưa chọn file", "danger")
         else:
             file = request.files["file"]
             if file and allowed_file(file.filename):
@@ -568,18 +579,19 @@ def upload():
                 summary = openai_summarize(content)
                 uploader = session["user"]["username"]
                 DOCS[filename] = {"content": content, "summary": summary, "uploader": uploader}
-                # Save to Firestore if available
                 if FS_CLIENT:
                     try:
                         FS_CLIENT.collection("docs").document(filename).set(DOCS[filename])
-                    except Exception: pass
+                    except: pass
                 flash("Upload và tóm tắt thành công!", "success")
             else:
-                msg = "File không được phép"
+                flash("File không được phép", "danger")
+
     all_docs = DOCS.copy()
     if FS_CLIENT:
         for doc_id, data in firestore_get("docs"):
             all_docs[doc_id] = data
+
     return render_template_string(HEADER + """
     <h3>Upload tài liệu</h3>
     <form method="post" enctype="multipart/form-data" class="mb-4">
@@ -589,7 +601,6 @@ def upload():
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
     {% endwith %}
-
     <h5>Danh sách tài liệu</h5>
     <table class="table table-hover">
       <thead class="table-success"><tr><th>File</th><th>Tóm tắt</th><th>Uploader</th><th></th></tr></thead>
@@ -610,7 +621,12 @@ def upload():
 @app.route("/doc/<fn>")
 @login_required()
 def doc_view(fn):
-    info = DOCS.get(fn) or (FS_CLIENT.collection("docs").document(fn).get().to_dict() if FS_CLIENT else None)
+    info = DOCS.get(fn)
+    if not info and FS_CLIENT:
+        try:
+            doc = FS_CLIENT.collection("docs").document(fn).get()
+            if doc.exists: info = doc.to_dict()
+        except: pass
     if not info: abort(404)
     return render_template_string(HEADER + """
     <h4>{{fn}}</h4>
@@ -625,9 +641,7 @@ def doc_view(fn):
     </div>
     """ + FOOTER, fn=fn, info=info)
 
-# -------------------------
-# Chat API
-# -------------------------
+# ====================== CHAT API ======================
 @app.route("/api/chat", methods=["POST"])
 @login_required()
 def chat_api():
@@ -636,7 +650,6 @@ def chat_api():
     if not q:
         return {"error": "Câu hỏi rỗng"}, 400
 
-    # Tìm trong tài liệu nội bộ
     relevant = []
     q_lower = q.lower()
     for fn, info in DOCS.items():
@@ -648,19 +661,13 @@ def chat_api():
         answer = openai_answer(q, context)
     else:
         web = serpapi_search(q)
-        if web and OPENAI_AVAILABLE:
-            answer = openai_answer(q, f"Kết quả tìm kiếm web (ngày {datetime.now().strftime('%d/%m/%Y')}):\n{web}")
-        else:
-            answer = web or "Không tìm thấy thông tin phù hợp trong tài liệu nội bộ và không thể truy vấn web."
+        answer = openai_answer(q, f"Kết quả tìm kiếm web:\n{web}") if web and OPENAI_AVAILABLE else (web or "Không tìm thấy thông tin.")
 
-    # Lưu lịch sử
     user = session["user"]["username"]
     CHAT_HISTORY.setdefault(user, []).append({"q": q, "a": answer, "time": datetime.now().isoformat()})
     return {"answer": answer}
 
-# -------------------------
-# Static & Run
-# -------------------------
+# ====================== STATIC & RUN ======================
 @app.route("/static/<path:p>")
 def serve_static(p):
     return send_from_directory("static", p)
