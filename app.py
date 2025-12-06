@@ -5,7 +5,7 @@ from datetime import datetime
 from functools import wraps
 from flask import (
     Flask, request, redirect, url_for, render_template_string,
-    session, abort, send_from_directory, flash, get_flashed_messages
+    session, abort, send_from_directory, flash, get_flashed_messages, jsonify
 )
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -30,14 +30,16 @@ try:
 except Exception:
     pd = None
 
+# SỬA LỖI 1: Cập nhật cách khởi tạo OpenAI Client (từ 0.x.x sang 1.x.x)
 try:
     import openai
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    if OPENAI_API_KEY:
-        openai.api_key = OPENAI_API_KEY
-    OPENAI_AVAILABLE = bool(OPENAI_API_KEY)
+    # Khởi tạo client mới (Version 1.x)
+    OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+    OPENAI_AVAILABLE = bool(OPENAI_CLIENT)
 except Exception:
     openai = None
+    OPENAI_CLIENT = None
     OPENAI_AVAILABLE = False
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
@@ -65,8 +67,6 @@ DOCS = {}           # filename -> dict
 CHAT_HISTORY = {}   # username -> list
 NHAN_XET = {}       # dv_code -> text
 SINH_HOAT = []      # list of activities
-
-# SỬA LỖI 1: Thay đổi tên Chi bộ mặc định
 CHI_BO_INFO = {"name": "Chi bộ 1", "baso": ""}
 
 FS_CLIENT = None
@@ -133,37 +133,38 @@ def firestore_get(collection_name):
     except Exception:
         return []
 
+# SỬA LỖI 2: Cập nhật hàm openai_summarize để dùng OPENAI_CLIENT
 def openai_summarize(text):
     if not OPENAI_AVAILABLE or not text.strip():
         return "Không thể tóm tắt (thiếu OpenAI hoặc nội dung rỗng)."
     try:
-        resp = openai.ChatCompletion.create(
+        resp = OPENAI_CLIENT.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": f"Tóm tắt tài liệu sau bằng tiếng Việt, 4-7 câu:\n\n{text[:6000]}"}],
             max_tokens=400,
             temperature=0.3
         )
         return resp.choices[0].message.content.strip()
-    # CẬP NHẬT LỖI 2: Hiển thị thông báo lỗi chi tiết
     except Exception as e:
         return f"Lỗi tóm tắt bằng AI: {str(e)}"
 
+# SỬA LỖI 3: Cập nhật hàm openai_answer để dùng OPENAI_CLIENT
 def openai_answer(question, context=""):
     if not OPENAI_AVAILABLE:
-        return "AI chưa được cấu hình."
+        return "AI chưa được cấu hình. (Thiếu OPENAI_API_KEY)"
     try:
         messages = [
-            {"role": "system", "content": "Bạn là trợ lý Đảng viên, trả lời chính xác, trang trọng bằng tiếng Việt."},
-            {"role": "user", "content": f"Ngữ cảnh (nếu có):\n{context}\n\nCâu hỏi: {question}"}
+            # Thêm hướng dẫn RAG: CHỈ SỬ DỤNG thông tin ngữ cảnh để đảm bảo kết quả "thật"
+            {"role": "system", "content": "Bạn là trợ lý Đảng viên. Trả lời chính xác, trang trọng bằng tiếng Việt. CHỈ SỬ DỤNG thông tin được cung cấp trong NGỮ CẢNH để trả lời, không giả định. Nếu không có thông tin, hãy nói không tìm thấy."},
+            {"role": "user", "content": f"Ngữ cảnh:\n{context}\n\nCâu hỏi: {question}"}
         ]
-        resp = openai.ChatCompletion.create(
+        resp = OPENAI_CLIENT.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             max_tokens=600,
             temperature=0.2
         )
         return resp.choices[0].message.content.strip()
-    # CẬP NHẬT LỖI 2: Hiển thị thông báo lỗi chi tiết
     except Exception as e:
         return f"Lỗi khi gọi AI: {str(e)}"
 
@@ -185,7 +186,7 @@ def serpapi_search(query, num=4):
         return ""
 
 # -------------------------
-# Templates
+# Templates (Cập nhật FOOTER để thêm nút Xóa lịch sử Chat)
 # -------------------------
 HEADER = f"""
 <!DOCTYPE html>
@@ -228,10 +229,11 @@ FOOTER = """
     © 2025 HỆ THỐNG QLNS - ĐẢNG VIÊN | Toàn bộ quyền được bảo lưu.
 </div>
 
-<button id="chat-button" class="btn btn-success shadow-lg fs-3">Chat</button>
+<button id="chat-button" class="btn btn-success shadow-lg fs-3"><i class="bi bi-chat-dots-fill"></i></button>
 <div id="chat-popup" class="card shadow-lg">
-  <div class="card-header bg-success text-white d-flex justify-content-between">
+  <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
     <strong>Trợ lý AI</strong>
+    <button id="clear-chat" class="btn btn-sm btn-outline-light me-2">Xóa lịch sử</button>
     <button id="close-chat" class="btn-close btn-close-white"></button>
   </div>
   <div class="card-body p-2">
@@ -245,8 +247,23 @@ FOOTER = """
 
 <script>
 const popup = document.getElementById('chat-popup');
+const chatMessages = document.getElementById('chat-messages');
+
 document.getElementById('chat-button').onclick = () => popup.style.display = 'block';
 document.getElementById('close-chat').onclick = () => popup.style.display = 'none';
+
+// Thêm chức năng xóa lịch sử chat
+document.getElementById('clear-chat').onclick = async () => {
+    if (confirm("Bạn có chắc chắn muốn xóa lịch sử trò chuyện?")) {
+        try {
+            await fetch('/api/chat/clear', {method:'POST'});
+            chatMessages.innerHTML = '';
+            addMsg('Lịch sử trò chuyện đã được xóa.', 'bot', true);
+        } catch(e) {
+            alert('Lỗi khi xóa lịch sử.');
+        }
+    }
+};
 
 async function sendQuestion(q) {
   if (!q.trim()) return;
@@ -260,15 +277,18 @@ async function sendQuestion(q) {
     addMsg((j.answer || j.error || 'Lỗi').replace(/\\n/g, '<br>'), 'bot');
   } catch(e) { removeLastBot(); addMsg('Lỗi kết nối', 'bot'); }
 }
-function addMsg(text, sender) {
+function addMsg(text, sender, isSystem=false) {
   const div = document.createElement('div');
   div.className = 'chat-msg ' + (sender==='user'?'text-end':'');
-  div.innerHTML = `<small class="text-muted">${sender==='user'?'Bạn':'AI'}</small><div class="p-2 rounded ${sender==='user'?'bg-primary text-white':'bg-light'} d-inline-block">${text}</div>`;
-  document.getElementById('chat-messages').appendChild(div);
+  let senderName = sender === 'user' ? 'Bạn' : 'AI';
+  let className = isSystem ? 'bg-warning text-dark' : (sender==='user'?'bg-primary text-white':'bg-light');
+  
+  div.innerHTML = `<small class="text-muted">${senderName}</small><div class="p-2 rounded ${className} d-inline-block">${text}</div>`;
+  chatMessages.appendChild(div);
   div.scrollIntoView();
 }
 function removeLastBot() {
-  const bots = document.querySelectorAll('.chat-msg:not(.text-end)');
+  const bots = chatMessages.querySelectorAll('.chat-msg:not(.text-end)');
   if (bots.length) bots[bots.length-1].remove();
 }
 document.getElementById('chat-form').onsubmit = e => { e.preventDefault(); sendQuestion(document.getElementById('chat-input').value); };
@@ -386,7 +406,7 @@ def admin_add_user():
                 "role": role,
                 "name": name
             }
-            #flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
+            flash(f"Thêm thành công! Mật khẩu mặc định: Test@123", "success")
             return redirect(url_for("admin_panel"))
     return render_template_string(HEADER + """
     <h4>Thêm người dùng mới</h4>
@@ -438,7 +458,7 @@ def admin_edit_user(username):
 def admin_reset_pass(username):
     if username in USERS:
         USERS[username]["password"] = generate_password_hash("Test@123")
-        #flash(f"Đã reset mật khẩu {username} về Test@123", "success")
+        flash(f"Đã reset mật khẩu {username} về Test@123", "success")
     return redirect(url_for("admin_panel"))
 
 @app.route("/admin/delete/<username>")
@@ -552,7 +572,7 @@ def change_password():
             flash("Mật khẩu phải ≥8 ký tự, có chữ hoa, thường, số và ký tự đặc biệt", "danger")
         else:
             USERS[session["user"]["username"]]["password"] = generate_password_hash(new1)
-            #flash("Đổi mật khẩu thành công!", "success")
+            flash("Đổi mật khẩu thành công!", "success")
             return redirect(url_for("dashboard"))
     return render_template_string(HEADER + """
     <h4>Đổi mật khẩu</h4>
@@ -585,7 +605,7 @@ def upload():
                     try:
                         FS_CLIENT.collection("docs").document(filename).set(DOCS[filename])
                     except: pass
-                #flash("Upload và tóm tắt thành công!", "success")
+                flash("Upload và tóm tắt thành công!", "success")
             else:
                 flash("File không được phép", "danger")
 
@@ -652,7 +672,7 @@ def chat_api():
     if not q:
         return {"error": "Câu hỏi rỗng"}, 400
 
-    # CẬP NHẬT LỖI 3: Thêm thông tin Chi bộ vào ngữ cảnh
+    # Thêm thông tin Chi bộ vào ngữ cảnh
     chi_bo_context = f"""
     NGỮ CẢNH CHI BỘ:
     Tên chi bộ: {CHI_BO_INFO.get('name', 'N/A')}. 
@@ -662,15 +682,18 @@ def chat_api():
 
     relevant = []
     q_lower = q.lower()
+    # Tìm kiếm tài liệu liên quan trong DOCS
     for fn, info in DOCS.items():
         if q_lower in info.get("content","").lower() or q_lower in info.get("summary","").lower():
             relevant.append((fn, info))
 
     if relevant:
+        # Ưu tiên sử dụng tài liệu đã upload (RAG)
         doc_context = "\n\n".join([f"Tài liệu: {fn}\nTóm tắt: {info['summary']}" for fn,info in relevant[:5]])
         context += "\n\nNGỮ CẢNH TÀI LIỆU:\n" + doc_context
         answer = openai_answer(q, context)
     else:
+        # Nếu không có tài liệu liên quan, dùng tìm kiếm web
         web = serpapi_search(q)
         if web:
             context += "\n\nNGỮ CẢNH TÌM KIẾM WEB:\n" + web
@@ -679,7 +702,16 @@ def chat_api():
 
     user = session["user"]["username"]
     CHAT_HISTORY.setdefault(user, []).append({"q": q, "a": answer, "time": datetime.now().isoformat()})
-    return {"answer": answer}
+    return jsonify({"answer": answer})
+
+# SỬA LỖI 4: Thêm API xóa lịch sử chat
+@app.route("/api/chat/clear", methods=["POST"])
+@login_required()
+def chat_clear():
+    user = session["user"]["username"]
+    if user in CHAT_HISTORY:
+        CHAT_HISTORY[user] = []
+    return jsonify({"message": "Lịch sử chat đã được xóa"}), 200
 
 # ====================== STATIC & RUN ======================
 @app.route("/static/<path:p>")
