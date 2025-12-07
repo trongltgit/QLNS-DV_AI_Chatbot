@@ -6,7 +6,7 @@ python-multipart>=0.0.6
 Werkzeug>=2.3
 numpy
 openai>=1.7
-PyPDF2>=2.12,<3.1
+PyPDF2<3.1,>=2.12
 python-docx>=0.8.12
 openpyxl>=3.1
 pandas>=2.1
@@ -15,5 +15,4 @@ gunicorn
 python-dotenv>=1.0
 requests>=2.31
 google-search-results>=2.4
-
-
+reportlab
