@@ -6,10 +6,27 @@ from datetime import datetime
 from functools import wraps
 from flask import (
     Flask, request, redirect, url_for, render_template_string,
-    session, abort, send_from_directory, flash, get_flashed_messages, jsonify
+    session, abort, send_from_directory, flash, get_flashed_messages, jsonify, send_file
 )
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
+
+# --- Giả định cài đặt thư viện ---
+# BẮT BUỘC: Bạn cần cài đặt thư viện reportlab nếu chưa có (pip install reportlab)
+try:
+    # Đăng ký font hỗ trợ tiếng Việt (Arial là font phổ biến)
+    pdfmetrics.registerFont(TTFont('VietFont', 'static/Arial.ttf'))
+    PDF_FONT_NAME = 'VietFont'
+except Exception:
+    # Fallback nếu không tìm thấy static/Arial.ttf
+    PDF_FONT_NAME = 'Helvetica'
+    print("WARNING: Không tìm thấy static/Arial.ttf. Sử dụng font Helvetica mặc định.")
+# --- End Giả định ---
 
 # Optional dependencies (Duy trì cấu trúc ban đầu)
 try:
@@ -48,6 +65,10 @@ app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025-change-in-produc
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(os.path.dirname(__file__), "static"), exist_ok=True)
+# Đảm bảo file font tồn tại cho PDF
+if not os.path.exists(os.path.join("static", "Arial.ttf")):
+    print("LƯU Ý QUAN TRỌNG: Để xuất PDF tiếng Việt hoạt động, bạn cần đặt file 'Arial.ttf' vào thư mục 'static'.")
+
 
 ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
 LOGO_PATH = "/static/Logo.png"
@@ -81,7 +102,7 @@ if not CHI_BO:
         "name": "Chi bộ 2",
         "baso": "54321",
         "bithu": "bithu2",
-        "hoatdong": []
+        "hoatdong": [f"[{datetime.now().strftime('%d/%m/%Y')}] Hoạt động từ thiện"]
     }
     USER_CHIBO["bithu1"] = "CB001"
     USER_CHIBO["dv01"] = "CB001"
@@ -90,7 +111,7 @@ if not CHI_BO:
     USER_CHIBO["dv02"] = "CB002"
     
 # Nhận xét mẫu
-NHAN_XET["dv01"] = "Đảng viên tích cực, hoàn thành tốt nhiệm vụ được giao trong quý IV."
+NHAN_XET["dv01"] = "Đảng viên tích cực, hoàn thành tốt nhiệm vụ được giao trong quý IV. Cần phát huy hơn nữa tinh thần xung kích."
 
 FS_CLIENT = None
 if FIRESTORE_AVAILABLE:
@@ -99,7 +120,7 @@ if FIRESTORE_AVAILABLE:
     except Exception:
         pass
 
-# ====================== UTILITIES (giữ nguyên) ======================
+# ====================== UTILITIES ======================
 def login_required(role=None):
     def wrapper(fn):
         @wraps(fn)
@@ -118,6 +139,68 @@ def admin_required(fn):
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
+# ====================== PDF GENERATION UTILITY ======================
+def generate_pdf_report(title, content_list, filename):
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    margin = 72
+    line_height = 16
+    y = height - margin
+
+    c.setFont(PDF_FONT_NAME, 16)
+    c.drawCentredString(width / 2, y, title.upper())
+    y -= 30
+
+    c.setFont(PDF_FONT_NAME, 11)
+
+    for item in content_list:
+        if y < margin + line_height * 2:
+            c.showPage()
+            c.setFont(PDF_FONT_NAME, 11)
+            y = height - margin - line_height
+
+        if isinstance(item, tuple):
+            # Format: (label, value)
+            label, value = item
+            c.drawString(margin, y, f"{label}:")
+            
+            # Sử dụng textobject cho wrap text
+            textobject = c.beginText(margin + 120, y)
+            textobject.setFont(PDF_FONT_NAME, 11)
+            lines = c._get
+            
+            # Manual line wrapping (basic)
+            lines = []
+            current_line = ""
+            words = value.split()
+            
+            for word in words:
+                test_line = current_line + " " + word
+                # Ước tính chiều rộng
+                if c.stringWidth(test_line.strip(), PDF_FONT_NAME, 11) < width - 120 - margin:
+                    current_line = test_line
+                else:
+                    lines.append(current_line.strip())
+                    current_line = word
+            lines.append(current_line.strip())
+
+            for line in lines:
+                c.drawString(margin + 120, y, line)
+                y -= line_height
+            y += line_height # Compensate for one extra line break before next item
+
+        elif isinstance(item, str):
+            # Simple line/header
+            c.drawString(margin, y, item)
+        
+        y -= line_height * 1.5 # Space between items
+
+    c.save()
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=True, download_name=filename, mimetype='application/pdf')
+
+# ====================== AI & File Utilities (giữ nguyên) ======================
 def read_file_text(path):
     # ... (function content remains the same)
     ext = path.rsplit(".", 1)[1].lower()
@@ -392,7 +475,7 @@ def admin_panel():
     </table>
     """ + FOOTER, chibo=CHI_BO, users=USERS, count=count_dv)
 
-# --- Admin: Quản lý Users ---
+# --- Admin: Quản lý Users (giữ nguyên logic) ---
 @app.route("/admin/users")
 @admin_required
 def admin_user_list():
@@ -444,7 +527,7 @@ def admin_add_user():
                 "name": name
             }
             if chibo_code and chibo_code in CHI_BO:
-                if role == "bithu" and CHI_BO[chibo_code].get("bithu"):
+                if role == "bithu" and CHI_BO[chibo_code].get("bithu") and CHI_BO[chibo_code]["bithu"] != username:
                     flash(f"Lưu user thành công. Lưu ý: Chi bộ {chibo_code} đã có Bí thư, không gán vai trò Bí thư.", "warning")
                 else:
                     USER_CHIBO[username] = chibo_code
@@ -512,15 +595,23 @@ def admin_edit_user(username):
         # 2. Cập nhật Chi bộ
         # Xóa khỏi chi bộ cũ
         if username in USER_CHIBO:
+            if CHI_BO.get(USER_CHIBO[username]) and CHI_BO[USER_CHIBO[username]].get("bithu") == username:
+                # Nếu là Bí thư bị gỡ khỏi chi bộ, phải xóa vai trò Bí thư của Chi bộ đó
+                CHI_BO[USER_CHIBO[username]]["bithu"] = ""
             del USER_CHIBO[username]
         
         # Gán vào chi bộ mới
         if chibo_code and chibo_code in CHI_BO:
-            # Kiểm tra nếu cố gắng gán Bí thư cho chi bộ đã có
-            if role == "bithu" and CHI_BO[chibo_code].get("bithu") and CHI_BO[chibo_code]["bithu"] != username:
-                flash(f"User được gán vai trò Bí thư nhưng Chi bộ {chibo_code} đã có Bí thư khác. KHÔNG GÁN CHI BỘ.", "warning")
+            # Nếu user được đặt làm Bí thư cho chi bộ này, cần cập nhật chi bộ
+            if role == "bithu":
+                if CHI_BO[chibo_code].get("bithu"):
+                    # Nếu chi bộ đã có Bí thư khác, không cho gán
+                    flash(f"User được gán vai trò Bí thư nhưng Chi bộ {chibo_code} đã có Bí thư khác. KHÔNG GÁN CHI BỘ.", "warning")
+                else:
+                    CHI_BO[chibo_code]["bithu"] = username
+                    USER_CHIBO[username] = chibo_code
             else:
-                USER_CHIBO[username] = chibo_code
+                 USER_CHIBO[username] = chibo_code
         
         flash("Cập nhật thông tin User thành công!", "success")
         return redirect(url_for("admin_user_list"))
@@ -560,11 +651,10 @@ def admin_edit_user(username):
     </form>
     """ + FOOTER, user_data=user_data, username=username, roles=roles, chibo=CHI_BO, current_chibo=current_chibo)
 
-# --- Admin: Quản lý Chi bộ (giữ nguyên) ---
+# --- Admin: Quản lý Chi bộ (Đã sửa lỗi thêm Chi bộ) ---
 @app.route("/admin/chibo/add", methods=["GET","POST"])
 @admin_required
 def admin_add_chibo():
-    # ... (content remains the same)
     if request.method == "POST":
         code = request.form["code"].strip().upper()
         name = request.form["name"].strip()
@@ -578,10 +668,13 @@ def admin_add_chibo():
         elif USER_CHIBO.get(bithu):
             flash("Bí thư này đã thuộc chi bộ khác", "danger")
         else:
+            # FIX: Logic thêm Chi bộ và gán Bí thư
             CHI_BO[code] = {"name": name, "baso": "", "bithu": bithu, "hoatdong": []}
             USER_CHIBO[bithu] = code
             flash("Tạo chi bộ thành công!", "success")
             return redirect(url_for("admin_panel"))
+    
+    # Lấy danh sách Bí thư chưa được gán cho Chi bộ nào
     free_bithu = [u for u,i in USERS.items() if i["role"]=="bithu" and u not in USER_CHIBO]
     return render_template_string(HEADER + """
     <h4>Thêm Chi bộ mới</h4>
@@ -589,30 +682,38 @@ def admin_add_chibo():
       <div class="mb-3"><input name="code" class="form-control" placeholder="Mã chi bộ (vd: CB001)" required></div>
       <div class="mb-3"><input name="name" class="form-control" placeholder="Tên chi bộ" required></div>
       <div class="mb-3">
+        <label class="form-label">Chọn Bí thư</label>
         <select name="bithu" class="form-select" required>
           <option value="">-- Chọn Bí thư --</option>
           {% for u in free_bithu %}
             <option value="{{u}}">{{users[u].name}} ({{u}})</option>
           {% endfor %}
         </select>
+        {% if not free_bithu %}
+          <div class="form-text text-danger">Không có Bí thư nào chưa được gán. Hãy tạo thêm Bí thư mới ở mục Quản lý Users.</div>
+        {% endif %}
       </div>
       <button class="btn btn-success">Tạo Chi bộ</button>
+      <a href="{{url_for('admin_panel')}}" class="btn btn-secondary">Hủy</a>
     </form>
     """ + FOOTER, free_bithu=free_bithu, users=USERS)
 
 @app.route("/admin/chibo/<code>")
 @admin_required
 def admin_chibo_detail(code):
-    # ... (content remains the same)
     if code not in CHI_BO: abort(404)
     info = CHI_BO[code]
     members = [u for u,c in USER_CHIBO.items() if c == code]
     return render_template_string(HEADER + """
     <h4>Chi bộ: {{info.name}} ({{code}})</h4>
     <p><strong>Bí thư:</strong> {{users.get(info.bithu, {'name':'(trống)'}).name}}</p>
-    <a href="{{url_for('admin_add_member', code=code)}}" class="btn btn-success mb-3">Thêm đảng viên</a>
+    <div class="d-flex mb-3">
+        <a href="{{url_for('admin_add_member', code=code)}}" class="btn btn-success me-2">Thêm đảng viên</a>
+        <a href="{{url_for('export_chibo_report', code=code)}}" class="btn btn-primary" target="_blank">Xuất Báo cáo Chi bộ (PDF)</a>
+    </div>
+    
     <table class="table table-sm table-bordered">
-      <tr><th>Tài khoản</th><th>Họ tên</th><th>Vai trò</th><th></th></tr>
+      <tr><th>Tài khoản</th><th>Họ tên</th><th>Vai trò</th><th>Hành động</th><th>Báo cáo cá nhân</th></tr>
       {% for u in members %}
       <tr>
         <td>{{u}}</td>
@@ -624,11 +725,24 @@ def admin_chibo_detail(code):
                onclick="return confirm('Xóa khỏi chi bộ?')">Xóa</a>
           {% endif %}
         </td>
+        <td>
+            {% if u != info.bithu %}
+                <a href="{{url_for('export_dv_report', dv=u)}}" class="btn btn-sm btn-info" target="_blank">Xuất Nhận xét (PDF)</a>
+            {% else %}
+                -
+            {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </table>
+    <h5 class="mt-4">Hoạt động Chi bộ gần đây</h5>
+    <ul>
+      {% for hd in info.hoatdong | reverse %}
+        <li>{{hd}}</li>
+      {% endfor %}
+    </ul>
     <a href="{{url_for('admin_panel')}}" class="btn btn-secondary">Quay lại</a>
-    """ + FOOTER, info=info, members=members, users=USERS)
+    """ + FOOTER, info=info, members=members, users=USERS, code=code)
 
 @app.route("/admin/chibo/<code>/add", methods=["GET","POST"])
 @admin_required
@@ -648,21 +762,31 @@ def admin_add_member(code):
     available = [u for u,i in USERS.items() if i["role"] in ["dangvien","bithu"] and u not in USER_CHIBO]
     return render_template_string(HEADER + """
     <h5>Thêm thành viên vào {{chibo[code].name}}</h5>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+    {% endwith %}
     <form method="post">
-      <select name="username" class="form-select mb-3">
+      <select name="username" class="form-select mb-3" required>
+        <option value="">-- Chọn User --</option>
         {% for u in available %}
-          <option value="{{u}}">{{users[u].name}} ({{u}})</option>
+          <option value="{{u}}">{{users[u].name}} ({{u}} - {{users[u].role.upper()}})</option>
         {% endfor %}
       </select>
-      <button class="btn btn-success">Thêm</button>
+      {% if not available %}
+        <div class="form-text text-danger mb-3">Không có User nào chưa được gán.</div>
+      {% endif %}
+      <button class="btn btn-success" {% if not available %}disabled{% endif %}>Thêm</button>
+      <a href="{{url_for('admin_chibo_detail', code=code)}}" class="btn btn-secondary">Hủy</a>
     </form>
-    """ + FOOTER, available=available, users=USERS, chibo=CHI_BO, code=code) # Pass code to template
+    """ + FOOTER, available=available, users=USERS, chibo=CHI_BO, code=code)
 
 @app.route("/admin/chibo/<code>/remove/<username>")
 @admin_required
 def admin_remove_member(code, username):
-    # ... (content remains the same)
     if USER_CHIBO.get(username) == code:
+        if CHI_BO.get(code) and CHI_BO[code].get("bithu") == username:
+             # Nếu là Bí thư bị gỡ khỏi chi bộ, phải xóa vai trò Bí thư của Chi bộ đó
+             CHI_BO[code]["bithu"] = ""
         del USER_CHIBO[username]
         flash("Đã xóa khỏi chi bộ", "success")
     return redirect(url_for("admin_chibo_detail", code=code))
@@ -671,29 +795,40 @@ def admin_remove_member(code, username):
 @app.route("/chi-bo")
 @login_required("bithu")
 def chi_bo_panel():
-    # ... (content remains the same)
     username = session["user"]["username"]
     chibo_code = USER_CHIBO.get(username)
     if not chibo_code or chibo_code not in CHI_BO:
         flash("Bạn chưa được gán chi bộ!", "danger"); return redirect(url_for("logout"))
     info = CHI_BO[chibo_code]
     dangvien_list = [u for u,c in USER_CHIBO.items() if c == chibo_code and USERS[u]["role"] == "dangvien"]
+    
     return render_template_string(HEADER + """
     <h3 class="text-success">Bí thư Chi bộ: {{info.name}}</h3>
+    <a href="{{url_for('export_chibo_report', code=chibo_code)}}" class="btn btn-primary mb-3" target="_blank">Xuất Báo cáo Chi bộ (PDF)</a>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+    {% endwith %}
+
     <form method="post" action="{{url_for('chi_bo_update', code=chibo_code)}}">
-      <div class="mb-3"><label>Mã số Chi bộ (baso)</label>
+      <div class="mb-3"><label class="form-label">Mã số Chi bộ (baso)</label>
         <input name="baso" class="form-control" value="{{info.get('baso','')}}"></div>
-      <div class="mb-3"><label>Thêm hoạt động</label>
-        <textarea name="hoatdong" class="form-control" rows="3"></textarea></div>
+      <div class="mb-3"><label class="form-label">Thêm hoạt động</label>
+        <textarea name="hoatdong" class="form-control" rows="3" placeholder="Nội dung hoạt động mới..."></textarea></div>
       <button class="btn btn-success">Lưu / Thêm</button>
     </form>
+    
     <h5 class="mt-4">Hoạt động chi bộ</h5><ol>
-      {% for a in info.hoatdong %}<li>{{a}}</li>{% else %}<li class="text-muted">Chưa có</li>{% endfor %}
+      {% for a in info.hoatdong | reverse %}<li>{{a}}</li>{% else %}<li class="text-muted">Chưa có</li>{% endfor %}
     </ol>
+    
     <h5>Nhận xét Đảng viên</h5>
     <div class="list-group">
       {% for u in dangvien_list %}
-        <a href="{{url_for('nhanxet_edit', dv=u)}}" class="list-group-item list-group-item-action">{{users[u].name}} ({{u}})</a>
+        <a href="{{url_for('nhanxet_edit', dv=u)}}" class="list-group-item list-group-item-action">
+            {{users[u].name}} ({{u}}) 
+            <a href="{{url_for('export_dv_report', dv=u)}}" class="btn btn-sm btn-info float-end ms-2" target="_blank">Xuất Nhận xét (PDF)</a>
+        </a>
       {% else %}<p class="text-muted">Chưa có đảng viên</p>{% endfor %}
     </div>
     """ + FOOTER, info=info, users=USERS, dangvien_list=dangvien_list, chibo_code=chibo_code)
@@ -701,7 +836,6 @@ def chi_bo_panel():
 @app.route("/chi-bo/update/<code>", methods=["POST"])
 @login_required("bithu")
 def chi_bo_update(code):
-    # ... (content remains the same)
     if code != USER_CHIBO.get(session["user"]["username"]): abort(403)
     baso = request.form.get("baso","").strip()
     hd = request.form.get("hoatdong","").strip()
@@ -713,7 +847,6 @@ def chi_bo_update(code):
 @app.route("/dangvien")
 @login_required("dangvien")
 def dangvien_panel():
-    # ... (content remains the same)
     username = session["user"]["username"]
     chibo_code = USER_CHIBO.get(username)
     if not chibo_code or chibo_code not in CHI_BO:
@@ -726,22 +859,26 @@ def dangvien_panel():
       <div class="card-header bg-success text-white">Thông tin chi bộ</div>
       <div class="card-body">
         <p><strong>Tên chi bộ:</strong> {{info.name}}</p>
+        <p><strong>Bí thư:</strong> {{users.get(info.bithu, {'name':'(trống)'}).name}}</p>
         <p><strong>Mã số:</strong> {{info.get('baso') or 'Chưa thiết lập'}}</p>
       </div>
     </div>
     <div class="card mb-3">
       <div class="card-header bg-success text-white">Nhận xét của Bí thư</div>
-      <div class="card-body">{{nhanxet}}</div>
+      <div class="card-body">
+        {{nhanxet}}
+        <a href="{{url_for('export_dv_report', dv=username)}}" class="btn btn-sm btn-outline-success float-end mt-2" target="_blank">Xuất Nhận xét (PDF)</a>
+      </div>
     </div>
     <div class="card">
       <div class="card-header bg-success text-white">Hoạt động chi bộ</div>
       <div class="card-body"><ol>
-        {% for a in info.hoatdong %}<li>{{a}}</li>{% else %}<li>Chưa có hoạt động</li>{% endfor %}
+        {% for a in info.hoatdong | reverse %}<li>{{a}}</li>{% else %}<li>Chưa có hoạt động</li>{% endfor %}
       </ol></div>
     </div>
-    """ + FOOTER, info=info, nhanxet=nhanxet)
+    """ + FOOTER, info=info, nhanxet=nhanxet, users=USERS, username=username)
 
-# ====================== NHẬN XÉT (ĐÃ KHẮC PHỤC LỖI SERVER) ======================
+# ====================== NHẬN XÉT ======================
 @app.route("/nhanxet/<dv>", methods=["GET","POST"])
 @login_required("bithu")
 def nhanxet_edit(dv):
@@ -750,7 +887,6 @@ def nhanxet_edit(dv):
     bithu_chibo = USER_CHIBO.get(session["user"]["username"])
     dv_chibo = USER_CHIBO.get(dv)
     
-    # Kiểm tra Đảng viên có thuộc Chi bộ của Bí thư không
     if bithu_chibo != dv_chibo: 
         flash("Bạn không có quyền nhận xét Đảng viên này (không cùng Chi bộ)", "danger")
         return redirect(url_for("chi_bo_panel"))
@@ -759,7 +895,6 @@ def nhanxet_edit(dv):
         NHAN_XET[dv] = request.form["noidung"]
         flash("Đã lưu nhận xét", "success")
     
-    # Đã bổ sung NHAN_XET và dv vào template context để khắc phục lỗi Internal Server Error
     return render_template_string(HEADER + """
     <h4>Nhận xét Đảng viên: {{users[dv].name}}</h4>
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -772,9 +907,85 @@ def nhanxet_edit(dv):
     </form>
     """ + FOOTER, users=USERS, dv=dv, NHAN_XET=NHAN_XET)
 
+# ====================== EXPORT PDF ROUTES ======================
+
+@app.route("/export/dv/<dv>")
+@login_required()
+def export_dv_report(dv):
+    if dv not in USERS or USERS[dv]["role"] != "dangvien":
+        abort(404)
+        
+    user = session["user"]
+    dv_chibo = USER_CHIBO.get(dv)
+    
+    # Kiểm tra quyền: Admin, hoặc Bí thư/Đảng viên cùng Chi bộ, hoặc chính bản thân Đảng viên đó
+    has_permission = (user["role"] == "admin" or 
+                      user["username"] == dv or 
+                      USER_CHIBO.get(user["username"]) == dv_chibo)
+    
+    if not has_permission:
+        abort(403)
+
+    dv_info = USERS[dv]
+    chibo_name = CHI_BO.get(dv_chibo, {}).get("name", "N/A")
+    nhanxet_text = NHAN_XET.get(dv, "Chưa có nhận xét.")
+    
+    title = f"Báo cáo nhận xét Đảng viên {dv_info['name']}"
+    content = [
+        ("Họ tên", dv_info['name']),
+        ("Tài khoản", dv),
+        ("Vai trò", "Đảng viên"),
+        ("Chi bộ", chibo_name),
+        "",
+        "--- NỘI DUNG NHẬN XÉT CỦA BÍ THƯ ---",
+        ("", nhanxet_text)
+    ]
+    
+    return generate_pdf_report(title, content, f"NhanXet_{dv}_{datetime.now().strftime('%Y%m%d')}.pdf")
+
+@app.route("/export/chibo/<code>")
+@login_required()
+def export_chibo_report(code):
+    if code not in CHI_BO: abort(404)
+    
+    user = session["user"]
+    chibo_info = CHI_BO[code]
+    
+    # Kiểm tra quyền: Admin, hoặc Bí thư Chi bộ đó
+    has_permission = (user["role"] == "admin" or 
+                      chibo_info.get("bithu") == user["username"])
+    
+    if not has_permission:
+        abort(403)
+        
+    members = [u for u,c in USER_CHIBO.items() if c == code]
+    dangvien_list = [u for u in members if USERS[u]["role"] == "dangvien"]
+    
+    title = f"Báo cáo Chi bộ {chibo_info['name']} ({code})"
+    content = [
+        ("Tên Chi bộ", chibo_info['name']),
+        ("Mã số (baso)", chibo_info.get('baso', 'N/A')),
+        ("Bí thư", USERS.get(chibo_info.get('bithu'), {}).get('name', 'N/A')),
+        ("Số Đảng viên", str(len(dangvien_list))),
+        "",
+        "--- HOẠT ĐỘNG CHI BỘ GẦN ĐÂY ---",
+    ]
+    
+    for hd in chibo_info.get('hoatdong', [])[::-1]:
+        content.append(hd)
+        
+    content.append("")
+    content.append("--- NHẬN XÉT VỀ CÁC ĐẢNG VIÊN ---")
+    
+    for dv in dangvien_list:
+        nhanxet_dv = NHAN_XET.get(dv, "Chưa có nhận xét.")
+        content.append(f"**Đảng viên: {USERS[dv]['name']} ({dv})**")
+        content.append(("", nhanxet_dv))
+
+    return generate_pdf_report(title, content, f"BaoCaoChiBo_{code}_{datetime.now().strftime('%Y%m%d')}.pdf")
 
 # ====================== CÁC ROUTE KHÁC (giữ nguyên) ======================
-
+# ... (Các route /upload, /doc/<fn>, /change-password, /api/chat giữ nguyên)
 @app.route("/upload", methods=["GET","POST"])
 @login_required()
 def upload():
