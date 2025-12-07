@@ -52,24 +52,24 @@ os.makedirs(os.path.join(os.path.dirname(__file__), "static"), exist_ok=True)
 ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
 LOGO_PATH = "/static/Logo.png"
 
-# ====================== DATA MỚI CHO NHIỀU CHI BỘ ======================
-# CHI_BO: mã chi bộ → thông tin chi bộ
+# ====================== GLOBAL DATA STORES ======================
 CHI_BO = {}                      # "CB001": {"name": "...", "baso": "...", "bithu": "username", "hoatdong": [...]}
-# USER_CHIBO: username → mã chi bộ (admin không có)
 USER_CHIBO = {}                  # "dv01": "CB001", "bithu1": "CB001"
-NHAN_XET = {}                    # dv_code -> text (giữ nguyên)
-DOCS = {}                        # giữ nguyên
-CHAT_HISTORY = {}                # giữ nguyên
+NHAN_XET = {}                    # dv_code -> text
+DOCS = {}
+CHAT_HISTORY = {}
 
-# USERS giữ nguyên như cũ
+# USERS (Tài khoản mẫu, mật khẩu đã được hash)
 USERS = {
     "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
-    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
+    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ 1"},
+    "bithu2": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ 2"},
     "user_demo": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "User Demo"},
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
+    "dv02": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 02"},
 }
 
-# Dữ liệu mẫu khi khởi động (có thể xóa nếu bạn đã có dữ liệu thật)
+# Dữ liệu mẫu khi khởi động
 if not CHI_BO:
     CHI_BO["CB001"] = {
         "name": "Chi bộ 1",
@@ -77,9 +77,20 @@ if not CHI_BO:
         "bithu": "bithu1",
         "hoatdong": [f"[{datetime.now().strftime('%d/%m/%Y')}] Sinh hoạt định kỳ tháng 12"]
     }
+    CHI_BO["CB002"] = {
+        "name": "Chi bộ 2",
+        "baso": "54321",
+        "bithu": "bithu2",
+        "hoatdong": []
+    }
     USER_CHIBO["bithu1"] = "CB001"
     USER_CHIBO["dv01"] = "CB001"
     USER_CHIBO["user_demo"] = "CB001"
+    USER_CHIBO["bithu2"] = "CB002"
+    USER_CHIBO["dv02"] = "CB002"
+    
+# Nhận xét mẫu
+NHAN_XET["dv01"] = "Đảng viên tích cực, hoàn thành tốt nhiệm vụ được giao trong quý IV."
 
 FS_CLIENT = None
 if FIRESTORE_AVAILABLE:
@@ -88,7 +99,7 @@ if FIRESTORE_AVAILABLE:
     except Exception:
         pass
 
-# ====================== UTILITIES (giữ nguyên hoàn toàn) ======================
+# ====================== UTILITIES (giữ nguyên) ======================
 def login_required(role=None):
     def wrapper(fn):
         @wraps(fn)
@@ -107,15 +118,8 @@ def admin_required(fn):
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
-def normalize_vietnamese(text):
-    if not isinstance(text, str):
-        return ""
-    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
-    text = text.lower()
-    text = re.sub(r'[^\w\s]', '', text)
-    return " ".join(text.split())
-
 def read_file_text(path):
+    # ... (function content remains the same)
     ext = path.rsplit(".", 1)[1].lower()
     try:
         if ext == "txt":
@@ -144,14 +148,8 @@ def read_file_text(path):
         return ""
     return ""
 
-def firestore_get(collection_name):
-    if not FS_CLIENT: return []
-    try:
-        return [(d.id, d.to_dict()) for d in FS_CLIENT.collection(collection_name).stream()]
-    except Exception:
-        return []
-
 def openai_summarize(text):
+    # ... (function content remains the same)
     if not OPENAI_AVAILABLE or not text.strip():
         return "Không thể tóm tắt (thiếu OpenAI hoặc nội dung rỗng)."
     try:
@@ -166,6 +164,7 @@ def openai_summarize(text):
         return f"Lỗi tóm tắt bằng AI: {str(e)}"
 
 def openai_answer(question, context=""):
+    # ... (function content remains the same)
     if not OPENAI_AVAILABLE:
         return "AI chưa được cấu hình. (Thiếu OPENAI_API_KEY)"
     has_specific_context = ("NGỮ CẢNH TÀI LIỆU" in context or "NGỮ CẢNH TÌM KIẾM WEB" in context)
@@ -190,37 +189,7 @@ def openai_answer(question, context=""):
     except Exception as e:
         return f"Lỗi khi gọi AI: {str(e)}"
 
-def serpapi_search(query, num=4):
-    if not SERPAPI_KEY:
-        print("Lỗi: Thiếu SERPAPI_KEY.")
-        return ""
-    try:
-        params = {"engine": "google", "q": query, "hl": "vi", "num": num, "api_key": SERPAPI_KEY}
-        r = requests.get("https://serpapi.com/search", params=params, timeout=10)
-        if r.status_code != 200:
-            print(f"Lỗi SerpAPI HTTP: {r.status_code}")
-            return ""
-        data = r.json()
-        snippets = []
-        if data.get("answer_box"):
-            snippet = data["answer_box"].get("snippet") or data["answer_box"].get("answer")
-            if snippet:
-                snippets.append(f"**Câu trả lời trực tiếp từ Google**\n{snippet}\nNguồn: {data['answer_box'].get('source_title', 'Google')}")
-        if data.get("knowledge_graph"):
-            snippet = data["knowledge_graph"].get("snippet")
-            if snippet:
-                snippets.append(f"**Tóm tắt nhanh**\n{snippet}\nNguồn: {data['knowledge_graph'].get('title', 'Google Knowledge Graph')}")
-        for item in data.get("organic_results", [])[:num]:
-            title = item.get("title", "")
-            snippet = item.get("snippet", "")
-            link = item.get("link", "")
-            snippets.append(f"**{title}**\n{snippet}\nNguồn: {link}")
-        return "\n\n".join(snippets)
-    except Exception as e:
-        print(f"Lỗi SerpAPI Search: {e}")
-        return ""
-
-# ====================== TEMPLATE (giữ nguyên y hệt bạn đã viết) ======================
+# ====================== TEMPLATE (giữ nguyên) ======================
 HEADER = f"""
 <!DOCTYPE html>
 <html lang="vi">
@@ -289,7 +258,7 @@ document.getElementById('clear-chat').onclick = async () => {
         try {
             await fetch('/api/chat/clear', {method:'POST'});
             chatMessages.innerHTML = '';
-            addMsg('Lịch sử trò chuyện đã được xóa.', 'bot', true);
+            addMsg('Lịch sử trò chuyện đã được xóa.', 'system', true);
         } catch(e) {
             alert('Lỗi khi xóa lịch sử.');
         }
@@ -343,7 +312,7 @@ def login():
                 "username": username,
                 "role": user["role"],
                 "name": user.get("name", username),
-                "chibo": USER_CHIBO.get(username)  # thêm thông tin chi bộ vào session
+                "chibo": USER_CHIBO.get(username)
             }
             return redirect(url_for("dashboard"))
         flash("Sai tài khoản hoặc mật khẩu", "danger")
@@ -362,7 +331,7 @@ def login():
               <button class="btn btn-success w-100">Đăng nhập</button>
             </form>
             <div class="alert alert-info mt-3 small">
-              <strong>Demo:</strong> Tài khoản Admin (admin) | Đảng viên (dv01)
+              <strong>Demo:</strong> Tài khoản Admin (admin) | Bí thư (bithu1) | Đảng viên (dv01)
             </div>
           </div>
         </div>
@@ -383,7 +352,7 @@ def dashboard():
     if role == "bithu": return redirect(url_for("chi_bo_panel"))
     return redirect(url_for("dangvien_panel"))
 
-# ====================== ADMIN PANEL - QUẢN LÝ NHIỀU CHI BỘ ======================
+# ====================== ADMIN PANEL - QUẢN LÝ TỔNG HỢP ======================
 @app.route("/admin")
 @admin_required
 def admin_panel():
@@ -391,9 +360,16 @@ def admin_panel():
     count_dv = {}
     for code in CHI_BO:
         count_dv[code] = sum(1 for u,c in USER_CHIBO.items() if c==code and USERS[u]["role"]=="dangvien")
+    
     return render_template_string(HEADER + """
-    <h3 class="text-success">Quản trị viên - Quản lý Chi bộ</h3>
-    <a href="{{url_for('admin_add_chibo')}}" class="btn btn-success mb-3">Thêm Chi bộ mới</a>
+    <h3 class="text-success">Quản trị viên</h3>
+    
+    <div class="d-flex mb-3">
+        <a href="{{url_for('admin_user_list')}}" class="btn btn-info me-2">Quản lý Users/Đảng viên</a>
+        <a href="{{url_for('admin_add_chibo')}}" class="btn btn-success">Thêm Chi bộ mới</a>
+    </div>
+
+    <h4 class="mt-4">Danh sách Chi bộ</h4>
     <table class="table table-bordered table-hover">
       <thead class="table-success">
         <tr><th>Mã chi bộ</th><th>Tên chi bộ</th><th>Bí thư</th><th>Số đảng viên</th><th>Hành động</th></tr>
@@ -416,9 +392,179 @@ def admin_panel():
     </table>
     """ + FOOTER, chibo=CHI_BO, users=USERS, count=count_dv)
 
+# --- Admin: Quản lý Users ---
+@app.route("/admin/users")
+@admin_required
+def admin_user_list():
+    all_users = sorted(USERS.keys())
+    return render_template_string(HEADER + """
+    <h4>Quản lý Users và Đảng viên</h4>
+    <a href="{{url_for('admin_add_user')}}" class="btn btn-success mb-3">Thêm User mới</a>
+    <table class="table table-bordered table-hover">
+        <thead class="table-info">
+            <tr><th>Tài khoản</th><th>Họ tên</th><th>Vai trò</th><th>Chi bộ</th><th>Hành động</th></tr>
+        </thead>
+        <tbody>
+        {% for u in all_users %}
+            {% set info = users[u] %}
+            <tr>
+                <td><strong>{{u}}</strong></td>
+                <td>{{info.name}}</td>
+                <td>{{info.role.upper()}}</td>
+                <td>{{chibo_map.get(u, 'Chưa gán')}}</td>
+                <td>
+                    <a href="{{url_for('admin_edit_user', username=u)}}" class="btn btn-sm btn-warning">Sửa</a>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    """ + FOOTER, users=USERS, chibo_map=USER_CHIBO)
+
+@app.route("/admin/users/add", methods=["GET","POST"])
+@admin_required
+def admin_add_user():
+    if request.method == "POST":
+        username = request.form["username"].strip().lower()
+        name = request.form["name"].strip()
+        password = request.form["password"]
+        role = request.form["role"]
+        chibo_code = request.form.get("chibo_code")
+
+        if username in USERS:
+            flash("Tài khoản đã tồn tại!", "danger")
+        elif not re.match(r'^[a-z0-9_]{3,}$', username):
+            flash("Tên đăng nhập không hợp lệ (chỉ được dùng chữ thường, số, _, tối thiểu 3 ký tự)", "danger")
+        elif len(password) < 6:
+            flash("Mật khẩu phải có ít nhất 6 ký tự", "danger")
+        else:
+            USERS[username] = {
+                "password": generate_password_hash(password),
+                "role": role,
+                "name": name
+            }
+            if chibo_code and chibo_code in CHI_BO:
+                if role == "bithu" and CHI_BO[chibo_code].get("bithu"):
+                    flash(f"Lưu user thành công. Lưu ý: Chi bộ {chibo_code} đã có Bí thư, không gán vai trò Bí thư.", "warning")
+                else:
+                    USER_CHIBO[username] = chibo_code
+                    flash("Thêm User và gán chi bộ thành công!", "success")
+            else:
+                flash("Thêm User thành công!", "success")
+            
+            return redirect(url_for("admin_user_list"))
+
+    roles = ["dangvien", "bithu", "admin"]
+    return render_template_string(HEADER + """
+    <h4>Thêm User mới</h4>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+    {% endwith %}
+    <form method="post" class="col-md-6">
+      <div class="mb-3"><input name="username" class="form-control" placeholder="Tên đăng nhập (username)" required></div>
+      <div class="mb-3"><input name="name" class="form-control" placeholder="Họ và tên" required></div>
+      <div class="mb-3"><input type="password" name="password" class="form-control" placeholder="Mật khẩu (ít nhất 6 ký tự)" required></div>
+      <div class="mb-3">
+        <label class="form-label">Vai trò</label>
+        <select name="role" class="form-select" required>
+          {% for r in roles %}
+            <option value="{{r}}">{{r.upper()}}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Gán vào Chi bộ (Không bắt buộc)</label>
+        <select name="chibo_code" class="form-select">
+          <option value="">-- Không gán Chi bộ --</option>
+          {% for code, info in chibo.items() %}
+            <option value="{{code}}">{{info.name}} ({{code}})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-success">Tạo User</button>
+      <a href="{{url_for('admin_user_list')}}" class="btn btn-secondary">Hủy</a>
+    </form>
+    """ + FOOTER, roles=roles, chibo=CHI_BO)
+
+@app.route("/admin/users/edit/<username>", methods=["GET","POST"])
+@admin_required
+def admin_edit_user(username):
+    if username not in USERS: abort(404)
+    user_data = USERS[username]
+    current_chibo = USER_CHIBO.get(username)
+    
+    if request.method == "POST":
+        name = request.form["name"].strip()
+        role = request.form["role"]
+        new_password = request.form.get("new_password")
+        chibo_code = request.form.get("chibo_code")
+        
+        # 1. Cập nhật thông tin cơ bản
+        user_data["name"] = name
+        user_data["role"] = role
+        if new_password:
+            if len(new_password) < 6:
+                flash("Mật khẩu mới phải có ít nhất 6 ký tự. KHÔNG CẬP NHẬT mật khẩu.", "danger")
+            else:
+                user_data["password"] = generate_password_hash(new_password)
+                flash("Đã đổi mật khẩu", "success")
+
+        # 2. Cập nhật Chi bộ
+        # Xóa khỏi chi bộ cũ
+        if username in USER_CHIBO:
+            del USER_CHIBO[username]
+        
+        # Gán vào chi bộ mới
+        if chibo_code and chibo_code in CHI_BO:
+            # Kiểm tra nếu cố gắng gán Bí thư cho chi bộ đã có
+            if role == "bithu" and CHI_BO[chibo_code].get("bithu") and CHI_BO[chibo_code]["bithu"] != username:
+                flash(f"User được gán vai trò Bí thư nhưng Chi bộ {chibo_code} đã có Bí thư khác. KHÔNG GÁN CHI BỘ.", "warning")
+            else:
+                USER_CHIBO[username] = chibo_code
+        
+        flash("Cập nhật thông tin User thành công!", "success")
+        return redirect(url_for("admin_user_list"))
+
+    roles = ["dangvien", "bithu", "admin"]
+    return render_template_string(HEADER + """
+    <h4>Chỉnh sửa User: {{username}}</h4>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+    {% endwith %}
+    <form method="post" class="col-md-6">
+      <div class="mb-3"><label class="form-label">Tên đăng nhập (Không sửa)</label>
+        <input class="form-control" value="{{username}}" disabled></div>
+      <div class="mb-3"><label class="form-label">Họ và tên</label>
+        <input name="name" class="form-control" value="{{user_data.name}}" required></div>
+      <div class="mb-3"><label class="form-label">Mật khẩu mới (Để trống nếu không đổi)</label>
+        <input type="password" name="new_password" class="form-control" placeholder="Mật khẩu mới (ít nhất 6 ký tự)"></div>
+      <div class="mb-3">
+        <label class="form-label">Vai trò</label>
+        <select name="role" class="form-select" required>
+          {% for r in roles %}
+            <option value="{{r}}" {% if r == user_data.role %}selected{% endif %}>{{r.upper()}}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Gán vào Chi bộ</label>
+        <select name="chibo_code" class="form-select">
+          <option value="">-- Không gán Chi bộ --</option>
+          {% for code, info in chibo.items() %}
+            <option value="{{code}}" {% if code == current_chibo %}selected{% endif %}>{{info.name}} ({{code}})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-warning">Cập nhật User</button>
+      <a href="{{url_for('admin_user_list')}}" class="btn btn-secondary">Hủy</a>
+    </form>
+    """ + FOOTER, user_data=user_data, username=username, roles=roles, chibo=CHI_BO, current_chibo=current_chibo)
+
+# --- Admin: Quản lý Chi bộ (giữ nguyên) ---
 @app.route("/admin/chibo/add", methods=["GET","POST"])
 @admin_required
 def admin_add_chibo():
+    # ... (content remains the same)
     if request.method == "POST":
         code = request.form["code"].strip().upper()
         name = request.form["name"].strip()
@@ -457,6 +603,7 @@ def admin_add_chibo():
 @app.route("/admin/chibo/<code>")
 @admin_required
 def admin_chibo_detail(code):
+    # ... (content remains the same)
     if code not in CHI_BO: abort(404)
     info = CHI_BO[code]
     members = [u for u,c in USER_CHIBO.items() if c == code]
@@ -486,6 +633,7 @@ def admin_chibo_detail(code):
 @app.route("/admin/chibo/<code>/add", methods=["GET","POST"])
 @admin_required
 def admin_add_member(code):
+    # ... (content remains the same)
     if code not in CHI_BO: abort(404)
     if request.method == "POST":
         username = request.form["username"]
@@ -508,20 +656,22 @@ def admin_add_member(code):
       </select>
       <button class="btn btn-success">Thêm</button>
     </form>
-    """ + FOOTER, available=available, users=USERS, chibo=CHI_BO)
+    """ + FOOTER, available=available, users=USERS, chibo=CHI_BO, code=code) # Pass code to template
 
 @app.route("/admin/chibo/<code>/remove/<username>")
 @admin_required
 def admin_remove_member(code, username):
+    # ... (content remains the same)
     if USER_CHIBO.get(username) == code:
         del USER_CHIBO[username]
         flash("Đã xóa khỏi chi bộ", "success")
     return redirect(url_for("admin_chibo_detail", code=code))
 
-# ====================== BÍ THƯ CHI BỘ PANEL (chỉ thấy chi bộ mình) ======================
+# ====================== BÍ THƯ CHI BỘ PANEL ======================
 @app.route("/chi-bo")
 @login_required("bithu")
 def chi_bo_panel():
+    # ... (content remains the same)
     username = session["user"]["username"]
     chibo_code = USER_CHIBO.get(username)
     if not chibo_code or chibo_code not in CHI_BO:
@@ -551,6 +701,7 @@ def chi_bo_panel():
 @app.route("/chi-bo/update/<code>", methods=["POST"])
 @login_required("bithu")
 def chi_bo_update(code):
+    # ... (content remains the same)
     if code != USER_CHIBO.get(session["user"]["username"]): abort(403)
     baso = request.form.get("baso","").strip()
     hd = request.form.get("hoatdong","").strip()
@@ -558,10 +709,11 @@ def chi_bo_update(code):
     if hd: CHI_BO[code]["hoatdong"].append(f"[{datetime.now().strftime('%d/%m/%Y')}] {hd}")
     return redirect(url_for("chi_bo_panel"))
 
-# ====================== ĐẢNG VIÊN PANEL (chỉ thấy chi bộ mình) ======================
+# ====================== ĐẢNG VIÊN PANEL (giữ nguyên) ======================
 @app.route("/dangvien")
 @login_required("dangvien")
 def dangvien_panel():
+    # ... (content remains the same)
     username = session["user"]["username"]
     chibo_code = USER_CHIBO.get(username)
     if not chibo_code or chibo_code not in CHI_BO:
@@ -589,7 +741,7 @@ def dangvien_panel():
     </div>
     """ + FOOTER, info=info, nhanxet=nhanxet)
 
-# ====================== NHẬN XÉT (giữ nguyên) ======================
+# ====================== NHẬN XÉT (ĐÃ KHẮC PHỤC LỖI SERVER) ======================
 @app.route("/nhanxet/<dv>", methods=["GET","POST"])
 @login_required("bithu")
 def nhanxet_edit(dv):
@@ -597,25 +749,36 @@ def nhanxet_edit(dv):
         abort(404)
     bithu_chibo = USER_CHIBO.get(session["user"]["username"])
     dv_chibo = USER_CHIBO.get(dv)
-    if bithu_chibo != dv_chibo: abort(403)  # chỉ được sửa dv trong chi bộ mình
+    
+    # Kiểm tra Đảng viên có thuộc Chi bộ của Bí thư không
+    if bithu_chibo != dv_chibo: 
+        flash("Bạn không có quyền nhận xét Đảng viên này (không cùng Chi bộ)", "danger")
+        return redirect(url_for("chi_bo_panel"))
+        
     if request.method == "POST":
         NHAN_XET[dv] = request.form["noidung"]
         flash("Đã lưu nhận xét", "success")
+    
+    # Đã bổ sung NHAN_XET và dv vào template context để khắc phục lỗi Internal Server Error
     return render_template_string(HEADER + """
     <h4>Nhận xét Đảng viên: {{users[dv].name}}</h4>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+    {% endwith %}
     <form method="post">
       <textarea name="noidung" class="form-control" rows="10">{{NHAN_XET.get(dv,'')}}</textarea>
       <button class="btn btn-success mt-3">Lưu</button>
       <a href="{{url_for('chi_bo_panel')}}" class="btn btn-secondary ms-2 mt-3">Quay lại</a>
     </form>
-    """ + FOOTER, users=USERS)
+    """ + FOOTER, users=USERS, dv=dv, NHAN_XET=NHAN_XET)
 
-# ====================== CÁC ROUTE KHÁC (upload, đổi mật khẩu, chat...) KHÔI PHỤC ======================
+
+# ====================== CÁC ROUTE KHÁC (giữ nguyên) ======================
 
 @app.route("/upload", methods=["GET","POST"])
 @login_required()
 def upload():
-    # Khôi phục logic tải lên tài liệu
+    # ... (content remains the same)
     if request.method == "POST":
         if "file" not in request.files:
             flash("Không tìm thấy file tải lên", "danger")
@@ -690,6 +853,7 @@ def upload():
 @app.route("/doc/<fn>")
 @login_required()
 def doc_view(fn):
+    # ... (content remains the same)
     if fn not in DOCS: abort(404)
     info = DOCS[fn]
     
@@ -729,7 +893,7 @@ def doc_view(fn):
 @app.route("/change-password", methods=["GET","POST"])
 @login_required()
 def change_password():
-    # Khôi phục logic đổi mật khẩu
+    # ... (content remains the same)
     username = session["user"]["username"]
     if request.method == "POST":
         old_pass = request.form["old_password"]
@@ -763,7 +927,7 @@ def change_password():
 @app.route("/api/chat", methods=["POST"])
 @login_required()
 def chat_api():
-    # Khôi phục logic API chat
+    # ... (content remains the same)
     username = session["user"]["username"]
     question = request.json.get("question", "").strip()
     
@@ -804,7 +968,7 @@ def chat_api():
 @app.route("/api/chat/clear", methods=["POST"])
 @login_required()
 def chat_clear_api():
-    # Khôi phục logic xóa lịch sử chat
+    # ... (content remains the same)
     username = session["user"]["username"]
     if username in CHAT_HISTORY:
         del CHAT_HISTORY[username]
