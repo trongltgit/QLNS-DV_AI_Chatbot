@@ -362,7 +362,7 @@ def login():
               <button class="btn btn-success w-100">Đăng nhập</button>
             </form>
             <div class="alert alert-info mt-3 small">
-              <strong>Demo:</strong> admin / Test@321 | dv01 / Test@123
+              <strong>Demo:</strong> Tài khoản Admin (admin) | Đảng viên (dv01)
             </div>
           </div>
         </div>
@@ -565,7 +565,7 @@ def dangvien_panel():
     username = session["user"]["username"]
     chibo_code = USER_CHIBO.get(username)
     if not chibo_code or chibo_code not in CHI_BO:
-        return HEADER + "<h3 class='text-danger'>Bạn chưa thuộc chi bộ nào.</h3>" + FOOTER
+        return render_template_string(HEADER + "<h3 class='text-danger'>Bạn chưa thuộc chi bộ nào.</h3>" + FOOTER)
     info = CHI_BO[chibo_code]
     nhanxet = NHAN_XET.get(username, "Chưa có nhận xét từ Bí thư.")
     return render_template_string(HEADER + """
@@ -690,12 +690,10 @@ def upload():
 @app.route("/doc/<fn>")
 @login_required()
 def doc_view(fn):
-    # Dòng này tương ứng với line 629 trong log lỗi của bạn.
-    # Thêm body cho hàm doc_view để tránh IndentationError
     if fn not in DOCS: abort(404)
     info = DOCS[fn]
     
-    # Kiểm tra quyền truy cập (Đơn giản: Admin xem tất cả, User xem file của mình hoặc file chung chi bộ)
+    # Kiểm tra quyền truy cập (Admin xem tất cả, User xem file của mình hoặc file chung chi bộ)
     user = session["user"]
     if user["role"] != "admin":
         if info["user"] != user["username"]:
@@ -704,8 +702,12 @@ def doc_view(fn):
                 
     content = ""
     try:
-        with open(info["path"], "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()[:5000].replace('\n', '<br>') + (f"...<br><br>... (Chỉ hiển thị 5000 ký tự đầu tiên)" if len(f.read()) > 5000 else "")
+        # Đọc nội dung file, giới hạn hiển thị
+        full_content = read_file_text(info["path"])
+        content_display = full_content[:5000].replace('\n', '<br>')
+        if len(full_content) > 5000:
+             content_display += "...<br><br>... (Chỉ hiển thị 5000 ký tự đầu tiên)"
+        content = content_display
     except Exception as e:
         content = f"Lỗi đọc file: {str(e)}"
         
@@ -714,7 +716,7 @@ def doc_view(fn):
     <p><strong>Người tải:</strong> {{users.get(info.user, {'name': 'N/A'}).name}} | <strong>Thời gian:</strong> {{info.uploaded_at}}</p>
     <div class="card mb-3">
       <div class="card-header bg-primary text-white">Tóm tắt AI</div>
-      <div class="card-body">{{info.summary.replace('\n', '<br>')}}</div>
+      <div class="card-body">{{info.summary.replace('\n', '<br>') | safe}}</div>
     </div>
     <div class="card">
       <div class="card-header bg-secondary text-white">Nội dung (Trích đoạn)</div>
@@ -773,7 +775,6 @@ def chat_api():
         
     # Xử lý ngữ cảnh tài liệu
     doc_context = ""
-    # Lấy tất cả tài liệu mà user có quyền truy cập
     relevant_docs = {
         fn: info for fn, info in DOCS.items() 
         if info["user"] == username or 
