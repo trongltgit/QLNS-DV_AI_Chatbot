@@ -54,12 +54,12 @@ LOGO_PATH = "/static/Logo.png"
 
 # ====================== DATA MỚI CHO NHIỀU CHI BỘ ======================
 # CHI_BO: mã chi bộ → thông tin chi bộ
-CHI_BO = {}                     # "CB001": {"name": "...", "baso": "...", "bithu": "username", "hoatdong": [...]}
+CHI_BO = {}                      # "CB001": {"name": "...", "baso": "...", "bithu": "username", "hoatdong": [...]}
 # USER_CHIBO: username → mã chi bộ (admin không có)
-USER_CHIBO = {}                 # "dv01": "CB001", "bithu1": "CB001"
-NHAN_XET = {}                   # dv_code -> text (giữ nguyên)
-DOCS = {}                       # giữ nguyên
-CHAT_HISTORY = {}               # giữ nguyên
+USER_CHIBO = {}                  # "dv01": "CB001", "bithu1": "CB001"
+NHAN_XET = {}                    # dv_code -> text (giữ nguyên)
+DOCS = {}                        # giữ nguyên
+CHAT_HISTORY = {}                # giữ nguyên
 
 # USERS giữ nguyên như cũ
 USERS = {
@@ -403,7 +403,7 @@ def admin_panel():
         <tr>
           <td><strong>{{code}}</strong></td>
           <td>{{info.name}}</td>
-          <td>{{users.get(info.bithu, {{'name':'(trống)'}}).name}}</td>
+          <td>{{users.get(info.bithu, {'name':'(trống)'}).name}}</td>
           <td>{{count.get(code,0)}}</td>
           <td>
             <a href="{{url_for('admin_chibo_detail', code=code)}}" class="btn btn-sm btn-primary">Quản lý</a>
@@ -462,7 +462,7 @@ def admin_chibo_detail(code):
     members = [u for u,c in USER_CHIBO.items() if c == code]
     return render_template_string(HEADER + """
     <h4>Chi bộ: {{info.name}} ({{code}})</h4>
-    <p><strong>Bí thư:</strong> {{users.get(info.bithu, {{'name':'(trống)'}}).name}}</p>
+    <p><strong>Bí thư:</strong> {{users.get(info.bithu, {'name':'(trống)'}).name}}</p>
     <a href="{{url_for('admin_add_member', code=code)}}" class="btn btn-success mb-3">Thêm đảng viên</a>
     <table class="table table-sm table-bordered">
       <tr><th>Tài khoản</th><th>Họ tên</th><th>Vai trò</th><th></th></tr>
@@ -610,42 +610,204 @@ def nhanxet_edit(dv):
     </form>
     """ + FOOTER, users=USERS)
 
-# ====================== CÁC ROUTE KHÁC (upload, đổi mật khẩu, chat...) giữ nguyên hoàn toàn ======================
-# ... (upload, doc_view, change_password, api/chat, api/chat/clear, static ... giữ nguyên như code gốc của bạn)
-
-# Giữ nguyên toàn bộ phần upload, doc_view, change_password, api/chat như bạn đã viết
-# (không thay đổi gì cả, chỉ thêm context chi bộ nếu cần trong chat nếu muốn)
+# ====================== CÁC ROUTE KHÁC (upload, đổi mật khẩu, chat...) KHÔI PHỤC ======================
 
 @app.route("/upload", methods=["GET","POST"])
 @login_required()
 def upload():
-    # ... (giữ nguyên 100% như bạn đã viết)
-    # chỉ thay CHI_BO_INFO thành thông tin chi bộ của user nếu cần
-    # nhưng để đơn giản giữ nguyên code cũ cũng được vì không ảnh hưởng
-    # (copy nguyên đoạn upload bạn đã viết)
+    # Khôi phục logic tải lên tài liệu
+    if request.method == "POST":
+        if "file" not in request.files:
+            flash("Không tìm thấy file tải lên", "danger")
+            return redirect(request.url)
+        file = request.files["file"]
+        if file.filename == "":
+            flash("Chưa chọn file", "danger")
+            return redirect(request.url)
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+            file.save(filepath)
+            
+            text = read_file_text(filepath)
+            summary = openai_summarize(text)
+            
+            DOCS[filename] = {
+                "user": session["user"]["username"],
+                "role": session["user"]["role"],
+                "path": filepath,
+                "summary": summary,
+                "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            flash(f"Đã tải lên file: {filename}. Đang tạo tóm tắt...", "success")
+            return redirect(url_for("doc_view", fn=filename))
+        else:
+            flash("Loại file không được hỗ trợ", "danger")
+    
+    # Lọc tài liệu theo chi bộ/admin
+    if session["user"]["role"] == "admin":
+        user_docs = DOCS
+    else:
+        user_docs = {
+            fn: info for fn, info in DOCS.items() 
+            if info["user"] == session["user"]["username"] or 
+               (USER_CHIBO.get(session["user"]["username"]) == USER_CHIBO.get(info["user"]) and info["role"] != "admin")
+        }
+    
+    return render_template_string(HEADER + """
+    <h3>Tải lên Tài liệu mới</h3>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+    {% endwith %}
+    <form method="post" enctype="multipart/form-data" class="mb-5">
+      <input type="file" name="file" class="form-control mb-3" required>
+      <button type="submit" class="btn btn-success">Tải lên</button>
+    </form>
+    
+    <hr>
+    
+    <h5 class="mt-4">Các Tài liệu đã tải lên</h5>
+    <table class="table table-bordered table-sm">
+      <thead class="table-info">
+        <tr><th>Tên file</th><th>Người tải</th><th>Tóm tắt</th><th>Xem</th></tr>
+      </thead>
+      <tbody>
+        {% for fn, info in user_docs.items() %}
+          <tr>
+            <td>{{fn}}</td>
+            <td>{{users.get(info.user, {'name': 'N/A'}).name}}</td>
+            <td>{{info.summary[:50]}}...</td>
+            <td><a href="{{url_for('doc_view', fn=fn)}}" class="btn btn-sm btn-info">Xem chi tiết</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="text-center text-muted">Chưa có tài liệu nào được tải lên.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    """ + FOOTER, users=USERS, user_docs=user_docs)
 
-# ... tất cả các route còn lại giữ nguyên ...
 
 @app.route("/doc/<fn>")
 @login_required()
-# ... giữ nguyên ...
+def doc_view(fn):
+    # Dòng này tương ứng với line 629 trong log lỗi của bạn.
+    # Thêm body cho hàm doc_view để tránh IndentationError
+    if fn not in DOCS: abort(404)
+    info = DOCS[fn]
+    
+    # Kiểm tra quyền truy cập (Đơn giản: Admin xem tất cả, User xem file của mình hoặc file chung chi bộ)
+    user = session["user"]
+    if user["role"] != "admin":
+        if info["user"] != user["username"]:
+            if USER_CHIBO.get(user["username"]) != USER_CHIBO.get(info["user"]):
+                abort(403)
+                
+    content = ""
+    try:
+        with open(info["path"], "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()[:5000].replace('\n', '<br>') + (f"...<br><br>... (Chỉ hiển thị 5000 ký tự đầu tiên)" if len(f.read()) > 5000 else "")
+    except Exception as e:
+        content = f"Lỗi đọc file: {str(e)}"
+        
+    return render_template_string(HEADER + """
+    <h4>Tài liệu: {{fn}}</h4>
+    <p><strong>Người tải:</strong> {{users.get(info.user, {'name': 'N/A'}).name}} | <strong>Thời gian:</strong> {{info.uploaded_at}}</p>
+    <div class="card mb-3">
+      <div class="card-header bg-primary text-white">Tóm tắt AI</div>
+      <div class="card-body">{{info.summary.replace('\n', '<br>')}}</div>
+    </div>
+    <div class="card">
+      <div class="card-header bg-secondary text-white">Nội dung (Trích đoạn)</div>
+      <div class="card-body small" style="white-space: pre-wrap;">{{content | safe}}</div>
+    </div>
+    <a href="{{url_for('upload')}}" class="btn btn-secondary mt-3">Quay lại</a>
+    """ + FOOTER, fn=fn, info=info, users=USERS, content=content)
+
 
 @app.route("/change-password", methods=["GET","POST"])
 @login_required()
-# ... giữ nguyên ...
+def change_password():
+    # Khôi phục logic đổi mật khẩu
+    username = session["user"]["username"]
+    if request.method == "POST":
+        old_pass = request.form["old_password"]
+        new_pass = request.form["new_password"]
+        
+        if not check_password_hash(USERS[username]["password"], old_pass):
+            flash("Mật khẩu cũ không đúng", "danger")
+        elif len(new_pass) < 6:
+            flash("Mật khẩu mới phải có ít nhất 6 ký tự", "danger")
+        else:
+            USERS[username]["password"] = generate_password_hash(new_pass)
+            flash("Đổi mật khẩu thành công!", "success")
+            return redirect(url_for("dashboard"))
+            
+    return render_template_string(HEADER + """
+    <div class="row justify-content-center">
+      <div class="col-md-5">
+        <h4>Đổi mật khẩu cho {{session.user.name}}</h4>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}<div class="alert alert-{{messages[0][0]}}">{{messages[0][1]}}</div>{% endif %}
+        {% endwith %}
+        <form method="post" class="card card-body">
+          <div class="mb-3"><input class="form-control" type="password" name="old_password" placeholder="Mật khẩu cũ" required></div>
+          <div class="mb-3"><input class="form-control" type="password" name="new_password" placeholder="Mật khẩu mới" required></div>
+          <button class="btn btn-success">Đổi mật khẩu</button>
+        </form>
+      </div>
+    </div>
+    """ + FOOTER)
 
 @app.route("/api/chat", methods=["POST"])
 @login_required()
 def chat_api():
-    # ... giữ nguyên ...
-    # chỉ thêm thông tin chi bộ vào context nếu muốn
-    context = f"NGỮ CẢNH CHI BỘ:\nTên chi bộ: {CHI_BO.get(USER_CHIBO.get(session['user']['username'],''), {{'name':'N/A'}}).get('name','N/A')}\nMã số: {CHI_BO.get(USER_CHIBO.get(session['user']['username'],''), {{'baso':''}}).get('baso','Chưa thiết lập')}\n"
-    # phần còn lại giữ nguyên như cũ
-    # ... (copy nguyên đoạn chat_api bạn đã viết)
+    # Khôi phục logic API chat
+    username = session["user"]["username"]
+    question = request.json.get("question", "").strip()
+    
+    if not question:
+        return jsonify({"error": "Câu hỏi không được rỗng"}), 400
+        
+    if username not in CHAT_HISTORY:
+        CHAT_HISTORY[username] = []
+        
+    # Xử lý ngữ cảnh tài liệu
+    doc_context = ""
+    # Lấy tất cả tài liệu mà user có quyền truy cập
+    relevant_docs = {
+        fn: info for fn, info in DOCS.items() 
+        if info["user"] == username or 
+           session["user"]["role"] == "admin" or
+           (USER_CHIBO.get(username) == USER_CHIBO.get(info["user"]) and info["role"] != "admin")
+    }
+    
+    if relevant_docs:
+        doc_context = "NGỮ CẢNH TÀI LIỆU:\n"
+        for fn, info in relevant_docs.items():
+            doc_context += f"***Tài liệu: {fn} (Tóm tắt)***\n{info['summary']}\n\n"
+        doc_context = doc_context[:4000] # Giới hạn kích thước ngữ cảnh
+        
+    # Xử lý ngữ cảnh chi bộ
+    chibo_code = USER_CHIBO.get(username, '')
+    chibo_info = CHI_BO.get(chibo_code, {})
+    chibo_context = f"NGỮ CẢNH CHI BỘ:\nTên chi bộ: {chibo_info.get('name','N/A')}\nMã số: {chibo_info.get('baso','Chưa thiết lập')}\nHoạt động gần nhất: {chibo_info.get('hoatdong', ['N/A'])[-1] if chibo_info.get('hoatdong') else 'N/A'}\n"
+    
+    context = chibo_context + doc_context
+    
+    answer = openai_answer(question, context=context)
+    
+    CHAT_HISTORY[username].append({"user": question, "ai": answer})
+    
+    return jsonify({"answer": answer})
 
 @app.route("/api/chat/clear", methods=["POST"])
 @login_required()
-# ... giữ nguyên ...
+def chat_clear_api():
+    # Khôi phục logic xóa lịch sử chat
+    username = session["user"]["username"]
+    if username in CHAT_HISTORY:
+        del CHAT_HISTORY[username]
+    return jsonify({"status": "success"})
 
 @app.route("/static/<path:p>")
 def serve_static(p):
