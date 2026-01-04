@@ -143,8 +143,8 @@ def vit5_summarize(text):
 # Health check route (rất quan trọng cho Render)
 # -------------------------
 @app.route("/")
-def health():
-    return "OK", 200
+def index():
+    return redirect(url_for("login"))
 
 # -------------------------
 # Base template
@@ -408,3 +408,4 @@ def dangvien_home():
 # Chỉ chạy local, không ảnh hưởng đến deploy trên Render
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+
