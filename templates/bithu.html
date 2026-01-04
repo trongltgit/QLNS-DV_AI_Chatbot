@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Trang Bí thư Chi bộ</h2>
+<p>Xin chào <strong>{{ user.name }}</strong> - {{ chi_bo_name }}</p>
+
+<h3>Đảng viên trong chi bộ</h3>
+{% if chi_bo_users %}
+<ul>
+    {% for u in chi_bo_users %}
+    <li><strong>{{ USERS[u].name }} ({{ u }})</strong>
+        {% if NHAN_XET.get(u) %}
+        <ul>
+            {% for nx in NHAN_XET[u] %}
+            <li>{{ nx.note }} <em>({{ USERS[nx.by].name }})</em></li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <br><em>Chưa có nhận xét</em>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p><em>Chưa có đảng viên nào trong chi bộ</em></p>
+{% endif %}
+
+<h3>Thêm nhận xét hoặc thông báo</h3>
+<form method="POST">
+    <label>Nhận xét cho đảng viên:</label><br>
+    <select name="dv_username" required>
+        {% for u in chi_bo_users %}
+        <option value="{{ u }}">{{ USERS[u].name }} ({{ u }})</option>
+        {% endfor %}
+    </select><br><br>
+    
+    <label>Nội dung nhận xét:</label><br>
+    <textarea name="nhan_xet" rows="3" style="width:100%; padding:10px;"></textarea><br><br>
+    
+    <label>Thông báo cho toàn chi bộ:</label><br>
+    <textarea name="thong_bao" rows="3" style="width:100%; padding:10px;"></textarea><br><br>
+    
+    <button type="submit">Gửi</button>
+</form>
+
+<h3>Thông báo chi bộ</h3>
+{% if THONG_BAO.get(chi_bo_id) %}
+<ul>
+    {% for tb in THONG_BAO[chi_bo_id] %}
+    <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
+    {% endfor %}
+</ul>
+{% else %}
+<p><em>Chưa có thông báo</em></p>
+{% endif %}
+{% endblock %}
