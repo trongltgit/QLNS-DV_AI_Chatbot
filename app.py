@@ -18,30 +18,10 @@ try:
 except ImportError:
     pd = None
 
-# VietAI ViT5 - Lazy loading
-VIT5_AVAILABLE = False
-tokenizer = None
-model = None
-
-def load_vit5_model():
-    global tokenizer, model, VIT5_AVAILABLE
-    if VIT5_AVAILABLE:
-        return
-    try:
-        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-        print("Đang tải VietAI ViT5 model... (có thể mất 1-2 phút lần đầu)")
-        tokenizer = AutoTokenizer.from_pretrained("VietAI/vit5-base")
-        model = AutoModelForSeq2SeqLM.from_pretrained("VietAI/vit5-base")
-        VIT5_AVAILABLE = True
-        print("ViT5 model tải thành công!")
-    except Exception as e:
-        print("Không tải được VietAI ViT5:", str(e))
-        VIT5_AVAILABLE = False
-
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025")
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), "uploads")
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # Giới hạn 10MB
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(os.path.dirname(__file__), "static"), exist_ok=True)
 
@@ -82,44 +62,26 @@ def read_file_text(path):
     try:
         if ext == "txt":
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read()
+                return f.read()[:10000]  # Giới hạn để tránh nặng
         if ext == "pdf" and PyPDF2:
             text = []
-            try:
-                with open(path, "rb") as f:
-                    reader = PyPDF2.PdfReader(f)
-                    for i, page in enumerate(reader.pages):
-                        if i >= 30:  # Giới hạn 30 trang để tránh OOM
-                            break
-                        t = page.extract_text() or ""
-                        text.append(t)
-                    return "\n".join(text)
-            except:
-                return "Không thể đọc nội dung PDF (file quá phức tạp)."
+            with open(path, "rb") as f:
+                reader = PyPDF2.PdfReader(f)
+                for i, page in enumerate(reader.pages):
+                    if i >= 20: break  # Chỉ đọc 20 trang đầu
+                    t = page.extract_text() or ""
+                    text.append(t)
+                return "\n".join(text)[:10000]
         if ext == "docx" and docx:
             doc_obj = docx.Document(path)
-            return "\n".join([p.text for p in doc_obj.paragraphs])
+            return "\n".join([p.text for p in doc_obj.paragraphs])[:10000]
         if ext in ("csv", "xlsx") and pd:
             df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
-            return df.head(30).to_string()
+            return df.head(20).to_string()
     except Exception as e:
         print("Lỗi đọc file:", e)
-    return ""
-
-def vit5_summarize(text):
-    if not text.strip():
-        return "Nội dung rỗng."
-    load_vit5_model()
-    if not VIT5_AVAILABLE:
-        return "Không thể tóm tắt (ViT5 chưa tải)."
-    try:
-        input_text = "tóm tắt: " + text[:1500]
-        inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
-        summary_ids = model.generate(inputs["input_ids"], max_length=150, num_beams=4, early_stopping=True)
-        return tokenizer.decode(summary_ids[0], skip_special_tokens=True).strip()
-    except Exception as e:
-        print("Lỗi tóm tắt:", e)
-        return "Lỗi tóm tắt (nội dung quá dài hoặc phức tạp)."
+        return "Không thể đọc nội dung file này."
+    return "File rỗng hoặc không hỗ trợ."
 
 # Route gốc
 @app.route("/")
@@ -154,8 +116,9 @@ BASE_TEMPLATE = """
         .flash { padding: 15px; margin: 20px 0; border-radius: 6px; }
         .success { background: #e8f5e9; border-left: 5px solid #4caf50; }
         .danger { background: #ffebee; border-left: 5px solid #f44336; }
+        .info { background: #e3f2fd; border-left: 5px solid #2196f3; }
         .logout { position: absolute; top: 20px; right: 30px; }
-        .summary-box { background:#e8f5e9; padding:20px; border-radius:8px; margin:20px 0; line-height:1.6; font-size:1.1em; }
+        .content-box { background:#f8fff8; padding:20px; border-radius:8px; margin:20px 0; line-height:1.6; white-space: pre-wrap; }
     </style>
 </head>
 <body>
@@ -182,7 +145,6 @@ BASE_TEMPLATE = """
 </html>
 """
 
-# Routes
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -213,81 +175,48 @@ def logout():
 @app.route("/dashboard")
 @login_required()
 def dashboard():
-    user = session["user"]
-    if user["role"] == "admin":
+    if session["user"]["role"] == "admin":
         return redirect(url_for("admin_users"))
-    elif user["role"] == "bithu":
+    elif session["user"]["role"] == "bithu":
         return redirect(url_for("bithu_home"))
     else:
         return redirect(url_for("dangvien_home"))
-
-@app.route("/admin/users")
-@login_required("admin")
-def admin_users():
-    body = """
-    <h2>Quản lý Người dùng</h2>
-    <a href="{{ url_for('admin_add_user') }}">➕ Thêm người dùng mới</a><br><br>
-    <table style="width:100%; border-collapse:collapse;">
-        <tr style="background:#4caf50; color:white;"><th>Username</th><th>Họ tên</th><th>Vai trò</th><th>Chi bộ</th></tr>
-        {% for u, p in USERS.items() %}
-        <tr style="border:1px solid #4caf50;">
-            <td style="padding:10px;">{{ u }}</td>
-            <td style="padding:10px;">{{ p.name }}</td>
-            <td style="padding:10px;">{{ p.role }}</td>
-            <td style="padding:10px;">
-                {% for cb_id, cb in CHI_BO_LIST.items() %}
-                    {% if u in cb.users %}{{ cb.name }}{% endif %}
-                {% endfor %}
-            </td>
-        </tr>
-        {% endfor %}
-    </table>
-    """
-    return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH, USERS=USERS, CHI_BO_LIST=CHI_BO_LIST)
 
 @app.route("/dangvien", methods=["GET", "POST"])
 @login_required("dangvien")
 def dangvien_home():
     user = session["user"]
-    chi_bo_name = ""
-    chi_bo_id = ""
-    for cb_id, cb in CHI_BO_LIST.items():
-        if user["username"] in cb["users"]:
-            chi_bo_name = cb["name"]
-            chi_bo_id = cb_id
-            break
+    chi_bo_name = next((cb["name"] for cb in CHI_BO_LIST.values() if user["username"] in cb["users"]), "Chưa thuộc chi bộ nào")
+    chi_bo_id = next((cb_id for cb_id, cb in CHI_BO_LIST.items() if user["username"] in cb["users"]), None)
 
     thong_bao_cb = THONG_BAO.get(chi_bo_id, [])
     nhan_xet_cb = NHAN_XET.get(user["username"], [])
 
-    summary = None
+    extracted_text = None
     uploaded_filename = None
 
     if request.method == "POST":
-        if 'file' not in request.files or request.files['file'].filename == '':
+        file = request.files.get("file")
+        if not file or file.filename == "":
             flash("Vui lòng chọn file!", "danger")
-        elif not allowed_file(request.files['file'].filename):
-            flash("Loại file không được hỗ trợ!", "danger")
+        elif not allowed_file(file.filename):
+            flash("Chỉ hỗ trợ: txt, pdf, docx, csv, xlsx", "danger")
         else:
-            file = request.files['file']
             filename = secure_filename(file.filename)
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
-            text = read_file_text(filepath)
-            if not text.strip():
-                flash("Không đọc được nội dung file.", "danger")
+            extracted_text = read_file_text(filepath)
+            uploaded_filename = filename
+            if extracted_text and len(extracted_text) > 50:
+                flash("Đọc nội dung file thành công! (Hiện tại chưa hỗ trợ tóm tắt AI trên bản miễn phí)", "info")
             else:
-                summary = vit5_summarize(text)
-                if "Lỗi" in summary or "Không thể" in summary:
-                    flash(summary, "danger")
-                else:
-                    flash("Tóm tắt thành công bằng AI ViT5!", "success")
-                uploaded_filename = filename
+                flash("Không đọc được nội dung file.", "danger")
 
+    # Body với Jinja render đúng
     body = """
     <h2>Trang Đảng viên</h2>
     <p>Xin chào <strong>{{ user.name }}</strong><br>
-    Thuộc <strong>{{ chi_bo_name or 'Chưa thuộc chi bộ nào' }}</strong></p>
+    Thuộc <strong>{{ chi_bo_name }}</strong></p>
 
     <h3>Thông báo / Hoạt động chi bộ</h3>
     {% if thong_bao_cb %}
@@ -311,22 +240,20 @@ def dangvien_home():
     <p><em>Chưa có nhận xét</em></p>
     {% endif %}
 
-    <h3>Upload tài liệu & Tóm tắt bằng AI (VietAI ViT5)</h3>
-    <p>Chọn file (tối đa 10MB) để upload và nhận tóm tắt tự động.</p>
+    <h3>Upload tài liệu</h3>
+    <p>Upload file để xem nội dung (txt, pdf, docx, excel). Tóm tắt AI tạm thời chưa khả dụng trên bản miễn phí.</p>
     <form method="POST" enctype="multipart/form-data">
         <input type="file" name="file" accept=".txt,.pdf,.docx,.csv,.xlsx" required><br><br>
-        <button type="submit">Upload và Tóm tắt</button>
+        <button type="submit">Upload & Xem nội dung</button>
     </form>
 
     {% if uploaded_filename %}
-    <p><strong>File đã upload:</strong> {{ uploaded_filename }}</p>
-    {% endif %}
-
-    {% if summary %}
-    <h4>Kết quả tóm tắt:</h4>
-    <div class="summary-box">
-        {{ summary }}
+    <h4>File đã upload: <strong>{{ uploaded_filename }}</strong></h4>
+    {% if extracted_text %}
+    <div class="content-box">
+        {{ extracted_text }}
     </div>
+    {% endif %}
     {% endif %}
     """
 
@@ -340,7 +267,7 @@ def dangvien_home():
         nhan_xet_cb=nhan_xet_cb,
         USERS=USERS,
         uploaded_filename=uploaded_filename,
-        summary=summary
+        extracted_text=extracted_text
     )
 
 if __name__ == "__main__":
