@@ -3,6 +3,7 @@ import re
 import unicodedata
 from functools import wraps
 from flask import Flask, request, redirect, url_for, render_template_string, session, flash, abort
+
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -20,19 +21,29 @@ try:
 except:
     pd = None
 
-# VietAI ViT5 offline summarizer
-try:
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-    tokenizer = AutoTokenizer.from_pretrained("VietAI/vit5-base")
-    model = AutoModelForSeq2SeqLM.from_pretrained("VietAI/vit5-base")
-    VIT5_AVAILABLE = True
-except Exception as e:
-    print("Không tải được VietAI ViT5:", e)
-    tokenizer = model = None
-    VIT5_AVAILABLE = False
+# VietAI ViT5 - Lazy loading
+VIT5_AVAILABLE = False
+tokenizer = None
+model = None
+
+def load_vit5_model():
+    global tokenizer, model, VIT5_AVAILABLE
+    if VIT5_AVAILABLE:
+        return
+    try:
+        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+        print("Đang tải VietAI ViT5 model... (có thể mất 1-2 phút lần đầu)")
+        tokenizer = AutoTokenizer.from_pretrained("VietAI/vit5-base")
+        model = AutoModelForSeq2SeqLM.from_pretrained("VietAI/vit5-base")
+        VIT5_AVAILABLE = True
+        print("ViT5 model tải thành công!")
+    except Exception as e:
+        print("Không tải được VietAI ViT5:", str(e))
+        VIT5_AVAILABLE = False
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025")
+
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(os.path.dirname(__file__), "static"), exist_ok=True)
@@ -41,16 +52,18 @@ ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
 LOGO_PATH = "/static/Logo.png"
 
 # -------------------------
-# Data storage
+# Data storage (in-memory - sẽ mất khi restart)
 # -------------------------
 USERS = {
     "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
     "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
 }
+
 DOCS = {}
 NHAN_XET = {}
 THONG_BAO = {}
+
 CHI_BO_LIST = {
     "cb01": {"name": "Chi bộ 1", "users": ["dv01"]},
     "cb02": {"name": "Chi bộ 2", "users": []},
@@ -97,25 +110,41 @@ def read_file_text(path):
         if ext in ("csv", "xlsx") and pd:
             df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
             return df.head(30).to_string()
-    except Exception:
+    except Exception as e:
+        print("Lỗi đọc file:", e)
         return ""
     return ""
 
 def vit5_summarize(text):
-    if not VIT5_AVAILABLE or not text.strip():
-        return "Không thể tóm tắt (ViT5 không khả dụng hoặc nội dung rỗng)."
-    
-    input_text = "tóm tắt: " + text[:2000]
-    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
-    
-    summary_ids = model.generate(
-        inputs["input_ids"],
-        max_length=200,
-        num_beams=4,
-        early_stopping=True
-    )
-    summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-    return summary.strip()
+    if not text.strip():
+        return "Nội dung rỗng."
+
+    load_vit5_model()  # Lazy load
+
+    if not VIT5_AVAILABLE:
+        return "Không thể tóm tắt (ViT5 không khả dụng hoặc đang tải)."
+
+    try:
+        input_text = "tóm tắt: " + text[:2000]
+        inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
+        summary_ids = model.generate(
+            inputs["input_ids"],
+            max_length=200,
+            num_beams=4,
+            early_stopping=True
+        )
+        summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+        return summary.strip()
+    except Exception as e:
+        print("Lỗi khi tóm tắt:", e)
+        return "Lỗi khi tóm tắt văn bản."
+
+# -------------------------
+# Health check route (rất quan trọng cho Render)
+# -------------------------
+@app.route("/")
+def health():
+    return "OK", 200
 
 # -------------------------
 # Base template
@@ -177,7 +206,7 @@ BASE_TEMPLATE = """
 # -------------------------
 # Routes
 # -------------------------
-@app.route("/", methods=["GET", "POST"])
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username")
@@ -189,7 +218,6 @@ def login():
             return redirect(url_for("dashboard"))
         else:
             flash("Sai username hoặc password!", "danger")
-
     body = """
     <h2>Đăng nhập hệ thống</h2>
     <form method="POST">
@@ -253,7 +281,6 @@ def admin_add_user():
             CHI_BO_LIST[chi_bo_id]["users"].append(username)
         flash(f"Thêm user {username} thành công!", "success")
         return redirect(url_for("admin_users"))
-
     body = """
     <h2>Thêm Người dùng mới</h2>
     <form method="POST">
@@ -352,10 +379,8 @@ def dangvien_home():
             chi_bo_name = cb["name"]
             chi_bo_id = cb_id
             break
-
     thong_bao_cb = THONG_BAO.get(chi_bo_id, [])
     nhan_xet_cb = NHAN_XET.get(user["username"], [])
-
     body = """
     <h2>Trang Đảng viên</h2>
     <p>Xin chào <strong>{{ user.name }}</strong><br>Thuộc <strong>{{ chi_bo_name }}</strong></p>
@@ -380,5 +405,6 @@ def dangvien_home():
                                   user=user, chi_bo_name=chi_bo_name,
                                   thong_bao_cb=thong_bao_cb, nhan_xet_cb=nhan_xet_cb, USERS=USERS)
 
+# Chỉ chạy local, không ảnh hưởng đến deploy trên Render
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
