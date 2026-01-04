@@ -41,20 +41,19 @@ def load_vit5_model():
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025")
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), "uploads")
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # Giới hạn file 10MB
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # Giới hạn 10MB
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(os.path.dirname(__file__), "static"), exist_ok=True)
 
 ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
 LOGO_PATH = "/static/Logo.png"
 
-# Data storage
+# Data
 USERS = {
     "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
     "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
 }
-
 NHAN_XET = {}
 THONG_BAO = {}
 CHI_BO_LIST = {
@@ -75,9 +74,6 @@ def login_required(role=None):
         return decorated
     return wrapper
 
-def admin_required(fn):
-    return login_required("admin")(fn)
-
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
@@ -87,31 +83,25 @@ def read_file_text(path):
         if ext == "txt":
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 return f.read()
-
         if ext == "pdf" and PyPDF2:
             text = []
             try:
                 with open(path, "rb") as f:
                     reader = PyPDF2.PdfReader(f)
-                    # Giới hạn số trang để tránh OOM
                     for i, page in enumerate(reader.pages):
-                        if i >= 50:  # Chỉ đọc tối đa 50 trang đầu
+                        if i >= 30:  # Giới hạn 30 trang để tránh OOM
                             break
-                        page_text = page.extract_text(fallback=False)  # Tránh xử lý sâu
-                        text.append(page_text or "")
+                        t = page.extract_text() or ""
+                        text.append(t)
                     return "\n".join(text)
-            except Exception as e:
-                print("Lỗi đọc PDF:", e)
-                return "Không thể đọc nội dung PDF (file phức tạp hoặc hỏng)."
-
+            except:
+                return "Không thể đọc nội dung PDF (file quá phức tạp)."
         if ext == "docx" and docx:
             doc_obj = docx.Document(path)
             return "\n".join([p.text for p in doc_obj.paragraphs])
-
         if ext in ("csv", "xlsx") and pd:
             df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
             return df.head(30).to_string()
-
     except Exception as e:
         print("Lỗi đọc file:", e)
     return ""
@@ -121,17 +111,17 @@ def vit5_summarize(text):
         return "Nội dung rỗng."
     load_vit5_model()
     if not VIT5_AVAILABLE:
-        return "Không thể tóm tắt (ViT5 chưa tải được)."
+        return "Không thể tóm tắt (ViT5 chưa tải)."
     try:
-        input_text = "tóm tắt: " + text[:1500]  # Giảm xuống 1500 ký tự để nhẹ hơn
+        input_text = "tóm tắt: " + text[:1500]
         inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
         summary_ids = model.generate(inputs["input_ids"], max_length=150, num_beams=4, early_stopping=True)
         return tokenizer.decode(summary_ids[0], skip_special_tokens=True).strip()
     except Exception as e:
         print("Lỗi tóm tắt:", e)
-        return "Lỗi khi tóm tắt (có thể do nội dung quá phức tạp)."
+        return "Lỗi tóm tắt (nội dung quá dài hoặc phức tạp)."
 
-# Route gốc - vừa health check vừa redirect người dùng
+# Route gốc
 @app.route("/")
 def index():
     if request.method == "HEAD":
@@ -231,7 +221,29 @@ def dashboard():
     else:
         return redirect(url_for("dangvien_home"))
 
-# (Giữ nguyên các route admin và bithu như trước - không thay đổi)
+@app.route("/admin/users")
+@login_required("admin")
+def admin_users():
+    body = """
+    <h2>Quản lý Người dùng</h2>
+    <a href="{{ url_for('admin_add_user') }}">➕ Thêm người dùng mới</a><br><br>
+    <table style="width:100%; border-collapse:collapse;">
+        <tr style="background:#4caf50; color:white;"><th>Username</th><th>Họ tên</th><th>Vai trò</th><th>Chi bộ</th></tr>
+        {% for u, p in USERS.items() %}
+        <tr style="border:1px solid #4caf50;">
+            <td style="padding:10px;">{{ u }}</td>
+            <td style="padding:10px;">{{ p.name }}</td>
+            <td style="padding:10px;">{{ p.role }}</td>
+            <td style="padding:10px;">
+                {% for cb_id, cb in CHI_BO_LIST.items() %}
+                    {% if u in cb.users %}{{ cb.name }}{% endif %}
+                {% endfor %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    """
+    return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH, USERS=USERS, CHI_BO_LIST=CHI_BO_LIST)
 
 @app.route("/dangvien", methods=["GET", "POST"])
 @login_required("dangvien")
@@ -252,56 +264,52 @@ def dangvien_home():
     uploaded_filename = None
 
     if request.method == "POST":
-        if 'file' not in request.files:
-            flash("Không có file được chọn!", "danger")
+        if 'file' not in request.files or request.files['file'].filename == '':
+            flash("Vui lòng chọn file!", "danger")
+        elif not allowed_file(request.files['file'].filename):
+            flash("Loại file không được hỗ trợ!", "danger")
         else:
             file = request.files['file']
-            if file.filename == '':
-                flash("Không chọn file nào!", "danger")
-            elif not allowed_file(file.filename):
-                flash("Loại file không hỗ trợ! Chỉ chấp nhận: txt, pdf, docx, csv, xlsx", "danger")
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+            text = read_file_text(filepath)
+            if not text.strip():
+                flash("Không đọc được nội dung file.", "danger")
             else:
-                filename = secure_filename(file.filename)
-                filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-                file.save(filepath)
-                text = read_file_text(filepath)
-                if not text.strip():
-                    flash("Không thể đọc nội dung từ file này.", "danger")
+                summary = vit5_summarize(text)
+                if "Lỗi" in summary or "Không thể" in summary:
+                    flash(summary, "danger")
                 else:
-                    summary = vit5_summarize(text)
-                    if "Lỗi" in summary or "Không thể" in summary:
-                        flash(summary, "danger")
-                    else:
-                        flash("Tóm tắt thành công bằng AI ViT5!", "success")
-                    uploaded_filename = filename
+                    flash("Tóm tắt thành công bằng AI ViT5!", "success")
+                uploaded_filename = filename
 
-    # Body template - ĐÃ SỬA CÚ PHÁP JINJA ĐÚNG 100%
-    body = f"""
+    body = """
     <h2>Trang Đảng viên</h2>
-    <p>Xin chào <strong>{user['name']}</strong><br>
-    Thuộc <strong>{chi_bo_name or 'Chưa thuộc chi bộ nào'}</strong></p>
+    <p>Xin chào <strong>{{ user.name }}</strong><br>
+    Thuộc <strong>{{ chi_bo_name or 'Chưa thuộc chi bộ nào' }}</strong></p>
 
     <h3>Thông báo / Hoạt động chi bộ</h3>
-    {% raw %}{% if thong_bao_cb %}{% endraw %}
+    {% if thong_bao_cb %}
     <ul>
-        {% raw %}{% for tb in thong_bao_cb %}{% endraw %}
-        <li>{{{{ tb.note }}}} <em>(bởi {{{{ USERS[tb.by].name }}}})</em></li>
-        {% raw %}{% endfor %}{% endraw %}
+        {% for tb in thong_bao_cb %}
+        <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
+        {% endfor %}
     </ul>
-    {% raw %}{% else %}{% endraw %}
+    {% else %}
     <p><em>Chưa có thông báo</em></p>
-    {% raw %}{% endif %}{% endraw %}
+    {% endif %}
 
     <h3>Nhận xét từ Bí thư</h3>
-    {% raw %}{% if nhan_xet_cb %}{% endraw %}
+    {% if nhan_xet_cb %}
     <ul>
-        {% raw %}{% for nx in nhan_xet_cb %}{% endraw %}
-        <li>{{{{ nx.note }}}} <em>(bởi {{{{ USERS[nx.by].name }}}})</em></li>
-        {% raw %}{% endfor %}{% endraw %}
+        {% for nx in nhan_xet_cb %}
+        <li>{{ nx.note }} <em>(bởi {{ USERS[nx.by].name }})</em></li>
+        {% endfor %}
     </ul>
-    {% raw %}{% else %}{% endraw %}
+    {% else %}
     <p><em>Chưa có nhận xét</em></p>
-    {% raw %}{% endif %}{% endraw %}
+    {% endif %}
 
     <h3>Upload tài liệu & Tóm tắt bằng AI (VietAI ViT5)</h3>
     <p>Chọn file (tối đa 10MB) để upload và nhận tóm tắt tự động.</p>
@@ -310,21 +318,30 @@ def dangvien_home():
         <button type="submit">Upload và Tóm tắt</button>
     </form>
 
-    {% raw %}{% if uploaded_filename %}{% endraw %}
-    <p><strong>File đã upload:</strong> {{{{ uploaded_filename }}}}</p>
-    {% raw %}{% endif %}{% endraw %}
+    {% if uploaded_filename %}
+    <p><strong>File đã upload:</strong> {{ uploaded_filename }}</p>
+    {% endif %}
 
-    {% raw %}{% if summary %}{% endraw %}
+    {% if summary %}
     <h4>Kết quả tóm tắt:</h4>
     <div class="summary-box">
-        {{{{ summary }}}}
+        {{ summary }}
     </div>
-    {% raw %}{% endif %}{% endraw %}
+    {% endif %}
     """
 
-    return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH,
-                                  thong_bao_cb=thong_bao_cb, nhan_xet_cb=nhan_xet_cb,
-                                  USERS=USERS, uploaded_filename=uploaded_filename, summary=summary)
+    return render_template_string(
+        BASE_TEMPLATE,
+        body_content=body,
+        logo_path=LOGO_PATH,
+        user=user,
+        chi_bo_name=chi_bo_name,
+        thong_bao_cb=thong_bao_cb,
+        nhan_xet_cb=nhan_xet_cb,
+        USERS=USERS,
+        uploaded_filename=uploaded_filename,
+        summary=summary
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
