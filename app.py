@@ -21,14 +21,14 @@ except ImportError:
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025")
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), "uploads")
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max
+app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024  # Giới hạn 8MB để an toàn
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(os.path.dirname(__file__), "static"), exist_ok=True)
 
 ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
 LOGO_PATH = "/static/Logo.png"
 
-# Data
+# Data in-memory
 USERS = {
     "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
     "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
@@ -62,34 +62,51 @@ def read_file_text(path):
     try:
         if ext == "txt":
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read()[:10000]  # Giới hạn để tránh nặng
+                content = f.read()
+                return content[:8000] if content else "File rỗng."
+
         if ext == "pdf" and PyPDF2:
-            text = []
-            with open(path, "rb") as f:
-                reader = PyPDF2.PdfReader(f)
-                for i, page in enumerate(reader.pages):
-                    if i >= 20: break  # Chỉ đọc 20 trang đầu
-                    t = page.extract_text() or ""
-                    text.append(t)
-                return "\n".join(text)[:10000]
+            try:
+                with open(path, "rb") as f:
+                    reader = PyPDF2.PdfReader(f)
+                    if reader.is_encrypted:
+                        return "PDF được mã hóa, không thể đọc."
+                    text_parts = []
+                    for i, page in enumerate(reader.pages):
+                        if i >= 15:  # Chỉ đọc tối đa 15 trang đầu
+                            break
+                        try:
+                            page_text = page.extract_text(fallback=False) or ""
+                            text_parts.append(page_text)
+                        except:
+                            text_parts.append("[Không đọc được trang này]")
+                    full_text = "\n".join(text_parts)
+                    return full_text[:8000] or "Không đọc được nội dung PDF."
+            except Exception as e:
+                print("PDF error:", e)
+                return "File PDF quá phức tạp hoặc bị hỏng, không thể đọc."
+
         if ext == "docx" and docx:
             doc_obj = docx.Document(path)
-            return "\n".join([p.text for p in doc_obj.paragraphs])[:10000]
+            paragraphs = [p.text for p in doc_obj.paragraphs if p.text.strip()]
+            return "\n".join(paragraphs)[:8000] or "File DOCX rỗng."
+
         if ext in ("csv", "xlsx") and pd:
             df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
             return df.head(20).to_string()
+
     except Exception as e:
         print("Lỗi đọc file:", e)
-        return "Không thể đọc nội dung file này."
-    return "File rỗng hoặc không hỗ trợ."
+        return "Lỗi khi đọc file."
+
+    return "Không hỗ trợ định dạng này hoặc file rỗng."
 
 # Route gốc
 @app.route("/")
 def index():
     if request.method == "HEAD":
         return "OK", 200
-    user_agent = request.headers.get("User-Agent", "")
-    if "Go-http-client" in user_agent or "Render" in user_agent:
+    if "Go-http-client" in request.headers.get("User-Agent", "") or "Render" in request.headers.get("User-Agent", ""):
         return "OK", 200
     return redirect(url_for("login"))
 
@@ -102,23 +119,21 @@ BASE_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hệ thống Quản lý Đảng viên</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background: #f0f7f4; color: #333; }
-        header { background: linear-gradient(135deg, #2e7d32, #4caf50); color: white; padding: 20px 0; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
-        header img { height: 80px; vertical-align: middle; }
-        header h1 { display: inline; margin-left: 20px; font-size: 2em; }
-        .container { max-width: 1100px; margin: 30px auto; padding: 30px; background: white; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
-        h2, h3, h4 { color: #2e7d32; }
-        a { color: #2e7d32; text-decoration: none; font-weight: bold; }
-        a:hover { text-decoration: underline; }
-        input, select, button { padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #4caf50; font-size: 1em; width: 100%; box-sizing: border-box; }
-        button { background: #4caf50; color: white; cursor: pointer; font-weight: bold; }
-        button:hover { background: #388e3c; }
-        .flash { padding: 15px; margin: 20px 0; border-radius: 6px; }
-        .success { background: #e8f5e9; border-left: 5px solid #4caf50; }
-        .danger { background: #ffebee; border-left: 5px solid #f44336; }
-        .info { background: #e3f2fd; border-left: 5px solid #2196f3; }
-        .logout { position: absolute; top: 20px; right: 30px; }
-        .content-box { background:#f8fff8; padding:20px; border-radius:8px; margin:20px 0; line-height:1.6; white-space: pre-wrap; }
+        body { font-family: 'Segoe UI', sans-serif; margin:0; padding:0; background:#f0f7f4; color:#333; }
+        header { background:linear-gradient(135deg,#2e7d32,#4caf50); color:white; padding:20px 0; text-align:center; box-shadow:0 4px 10px rgba(0,0,0,0.2); }
+        header img { height:80px; vertical-align:middle; }
+        header h1 { display:inline; margin-left:20px; font-size:2em; }
+        .container { max-width:1100px; margin:30px auto; padding:30px; background:white; border-radius:12px; box-shadow:0 5px 15px rgba(0,0,0,0.1); }
+        h2,h3,h4 { color:#2e7d32; }
+        .flash { padding:15px; margin:20px 0; border-radius:6px; }
+        .success { background:#e8f5e9; border-left:5px solid #4caf50; }
+        .danger { background:#ffebee; border-left:5px solid #f44336; }
+        .info { background:#e3f2fd; border-left:5px solid #2196f3; }
+        .content-box { background:#f8fff8; padding:20px; border-radius:8px; margin:20px 0; white-space:pre-wrap; line-height:1.6; }
+        .logout { position:absolute; top:20px; right:30px; }
+        button { background:#4caf50; color:white; padding:10px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; }
+        button:hover { background:#388e3c; }
+        input[type=file] { padding:10px; }
     </style>
 </head>
 <body>
@@ -155,13 +170,12 @@ def login():
             session["user"] = {"username": username, "role": user["role"], "name": user["name"]}
             flash("Đăng nhập thành công!", "success")
             return redirect(url_for("dashboard"))
-        else:
-            flash("Sai tên đăng nhập hoặc mật khẩu!", "danger")
+        flash("Sai tên đăng nhập hoặc mật khẩu!", "danger")
     body = """
     <h2>Đăng nhập hệ thống</h2>
     <form method="POST">
-        <div>Tên đăng nhập:<br><input name="username" required></div><br>
-        <div>Mật khẩu:<br><input name="password" type="password" required></div><br>
+        Tên đăng nhập:<br><input name="username" required style="width:300px;padding:10px;"><br><br>
+        Mật khẩu:<br><input name="password" type="password" required style="width:300px;padding:10px;"><br><br>
         <button type="submit">Đăng nhập</button>
     </form>
     """
@@ -175,9 +189,10 @@ def logout():
 @app.route("/dashboard")
 @login_required()
 def dashboard():
-    if session["user"]["role"] == "admin":
+    role = session["user"]["role"]
+    if role == "admin":
         return redirect(url_for("admin_users"))
-    elif session["user"]["role"] == "bithu":
+    elif role == "bithu":
         return redirect(url_for("bithu_home"))
     else:
         return redirect(url_for("dangvien_home"))
@@ -186,8 +201,13 @@ def dashboard():
 @login_required("dangvien")
 def dangvien_home():
     user = session["user"]
-    chi_bo_name = next((cb["name"] for cb in CHI_BO_LIST.values() if user["username"] in cb["users"]), "Chưa thuộc chi bộ nào")
-    chi_bo_id = next((cb_id for cb_id, cb in CHI_BO_LIST.items() if user["username"] in cb["users"]), None)
+    chi_bo_name = "Chưa thuộc chi bộ nào"
+    chi_bo_id = None
+    for cb_id, cb in CHI_BO_LIST.items():
+        if user["username"] in cb["users"]:
+            chi_bo_name = cb["name"]
+            chi_bo_id = cb_id
+            break
 
     thong_bao_cb = THONG_BAO.get(chi_bo_id, [])
     nhan_xet_cb = NHAN_XET.get(user["username"], [])
@@ -198,21 +218,20 @@ def dangvien_home():
     if request.method == "POST":
         file = request.files.get("file")
         if not file or file.filename == "":
-            flash("Vui lòng chọn file!", "danger")
+            flash("Chưa chọn file!", "danger")
         elif not allowed_file(file.filename):
-            flash("Chỉ hỗ trợ: txt, pdf, docx, csv, xlsx", "danger")
+            flash("Chỉ hỗ trợ txt, pdf, docx, csv, xlsx!", "danger")
         else:
             filename = secure_filename(file.filename)
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
             extracted_text = read_file_text(filepath)
             uploaded_filename = filename
-            if extracted_text and len(extracted_text) > 50:
-                flash("Đọc nội dung file thành công! (Hiện tại chưa hỗ trợ tóm tắt AI trên bản miễn phí)", "info")
+            if "không thể đọc" in extracted_text.lower() or "lỗi" in extracted_text.lower():
+                flash(extracted_text, "danger")
             else:
-                flash("Không đọc được nội dung file.", "danger")
+                flash("Đọc nội dung file thành công!", "success")
 
-    # Body với Jinja render đúng
     body = """
     <h2>Trang Đảng viên</h2>
     <p>Xin chào <strong>{{ user.name }}</strong><br>
@@ -220,40 +239,38 @@ def dangvien_home():
 
     <h3>Thông báo / Hoạt động chi bộ</h3>
     {% if thong_bao_cb %}
-    <ul>
-        {% for tb in thong_bao_cb %}
-        <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
-        {% endfor %}
-    </ul>
+        <ul>
+            {% for tb in thong_bao_cb %}
+                <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
+            {% endfor %}
+        </ul>
     {% else %}
-    <p><em>Chưa có thông báo</em></p>
+        <p><em>Chưa có thông báo</em></p>
     {% endif %}
 
     <h3>Nhận xét từ Bí thư</h3>
     {% if nhan_xet_cb %}
-    <ul>
-        {% for nx in nhan_xet_cb %}
-        <li>{{ nx.note }} <em>(bởi {{ USERS[nx.by].name }})</em></li>
-        {% endfor %}
-    </ul>
+        <ul>
+            {% for nx in nhan_xet_cb %}
+                <li>{{ nx.note }} <em>(bởi {{ USERS[nx.by].name }})</em></li>
+            {% endfor %}
+        </ul>
     {% else %}
-    <p><em>Chưa có nhận xét</em></p>
+        <p><em>Chưa có nhận xét</em></p>
     {% endif %}
 
     <h3>Upload tài liệu</h3>
-    <p>Upload file để xem nội dung (txt, pdf, docx, excel). Tóm tắt AI tạm thời chưa khả dụng trên bản miễn phí.</p>
+    <p>Upload file để xem nội dung. (Tóm tắt AI tạm thời chưa hỗ trợ trên bản miễn phí)</p>
     <form method="POST" enctype="multipart/form-data">
         <input type="file" name="file" accept=".txt,.pdf,.docx,.csv,.xlsx" required><br><br>
         <button type="submit">Upload & Xem nội dung</button>
     </form>
 
     {% if uploaded_filename %}
-    <h4>File đã upload: <strong>{{ uploaded_filename }}</strong></h4>
-    {% if extracted_text %}
-    <div class="content-box">
-        {{ extracted_text }}
-    </div>
-    {% endif %}
+        <h4>File đã upload: <strong>{{ uploaded_filename }}</strong></h4>
+        {% if extracted_text %}
+            <div class="content-box">{{ extracted_text }}</div>
+        {% endif %}
     {% endif %}
     """
 
