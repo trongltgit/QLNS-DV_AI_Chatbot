@@ -1,9 +1,6 @@
 import os
-import re
-import unicodedata
 from functools import wraps
 from flask import Flask, request, redirect, url_for, render_template_string, session, flash, abort
-
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -43,7 +40,6 @@ def load_vit5_model():
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025")
-
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(os.path.dirname(__file__), "static"), exist_ok=True)
@@ -52,7 +48,7 @@ ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
 LOGO_PATH = "/static/Logo.png"
 
 # -------------------------
-# Data storage (in-memory - sẽ mất khi restart)
+# Data storage (in-memory)
 # -------------------------
 USERS = {
     "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
@@ -60,7 +56,6 @@ USERS = {
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
 }
 
-DOCS = {}
 NHAN_XET = {}
 THONG_BAO = {}
 
@@ -118,12 +113,9 @@ def read_file_text(path):
 def vit5_summarize(text):
     if not text.strip():
         return "Nội dung rỗng."
-
-    load_vit5_model()  # Lazy load
-
+    load_vit5_model()
     if not VIT5_AVAILABLE:
-        return "Không thể tóm tắt (ViT5 không khả dụng hoặc đang tải)."
-
+        return "Không thể tóm tắt (ViT5 chưa tải được hoặc đang tải)."
     try:
         input_text = "tóm tắt: " + text[:2000]
         inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
@@ -140,10 +132,19 @@ def vit5_summarize(text):
         return "Lỗi khi tóm tắt văn bản."
 
 # -------------------------
-# Health check route (rất quan trọng cho Render)
+# Route gốc: Vừa health check cho Render, vừa redirect người dùng thật đến login
 # -------------------------
 @app.route("/")
 def index():
+    # Render health check thường dùng HEAD request hoặc User-Agent đặc trưng
+    if request.method == "HEAD":
+        return "OK", 200
+    
+    user_agent = request.headers.get("User-Agent", "")
+    if "Go-http-client" in user_agent or "Render" in user_agent:
+        return "OK", 200
+    
+    # Người dùng thật (trình duyệt) → chuyển đến trang đăng nhập
     return redirect(url_for("login"))
 
 # -------------------------
@@ -161,22 +162,18 @@ BASE_TEMPLATE = """
         header { background: linear-gradient(135deg, #2e7d32, #4caf50); color: white; padding: 20px 0; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
         header img { height: 80px; vertical-align: middle; }
         header h1 { display: inline; margin-left: 20px; font-size: 2em; }
-        .container { max-width: 1100px; margin: 30px auto; padding: 30px; background: white; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); text-align: center; }
+        .container { max-width: 1100px; margin: 30px auto; padding: 30px; background: white; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
         h2, h3 { color: #2e7d32; }
         a { color: #2e7d32; text-decoration: none; font-weight: bold; }
         a:hover { text-decoration: underline; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        table, th, td { border: 1px solid #4caf50; }
-        th { background: #4caf50; color: white; padding: 12px; }
-        td { padding: 10px; }
-        input, select, button { padding: 10px; margin: 10px; border-radius: 6px; border: 1px solid #4caf50; font-size: 1em; }
+        input, select, button { padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #4caf50; font-size: 1em; width: 100%; box-sizing: border-box; }
         button { background: #4caf50; color: white; cursor: pointer; font-weight: bold; }
         button:hover { background: #388e3c; }
         .flash { padding: 15px; margin: 20px 0; border-radius: 6px; }
         .success { background: #e8f5e9; border-left: 5px solid #4caf50; }
         .danger { background: #ffebee; border-left: 5px solid #f44336; }
-        ul { text-align: left; display: inline-block; }
         .logout { position: absolute; top: 20px; right: 30px; }
+        .summary-box { background:#e8f5e9; padding:20px; border-radius:8px; margin:20px 0; line-height:1.6; font-size:1.1em; }
     </style>
 </head>
 <body>
@@ -217,12 +214,12 @@ def login():
             flash("Đăng nhập thành công!", "success")
             return redirect(url_for("dashboard"))
         else:
-            flash("Sai username hoặc password!", "danger")
+            flash("Sai tên đăng nhập hoặc mật khẩu!", "danger")
     body = """
     <h2>Đăng nhập hệ thống</h2>
     <form method="POST">
-        <div>Tên đăng nhập:<br><input name="username" required style="width:300px;"></div><br>
-        <div>Mật khẩu:<br><input name="password" type="password" required style="width:300px;"></div><br>
+        <div>Tên đăng nhập:<br><input name="username" required></div><br>
+        <div>Mật khẩu:<br><input name="password" type="password" required></div><br>
         <button type="submit">Đăng nhập</button>
     </form>
     """
@@ -244,20 +241,25 @@ def dashboard():
     else:
         return redirect(url_for("dangvien_home"))
 
+# Admin routes
 @app.route("/admin/users")
 @admin_required
 def admin_users():
     body = """
     <h2>Quản lý Người dùng</h2>
     <a href="{{ url_for('admin_add_user') }}">➕ Thêm người dùng mới</a><br><br>
-    <table>
-        <tr><th>Username</th><th>Họ tên</th><th>Vai trò</th><th>Chi bộ</th></tr>
+    <table style="width:100%; border-collapse:collapse; margin:20px 0;">
+        <tr style="background:#4caf50; color:white;"><th>Username</th><th>Họ tên</th><th>Vai trò</th><th>Chi bộ</th></tr>
         {% for u, p in USERS.items() %}
-        <tr>
-            <td>{{ u }}</td>
-            <td>{{ p.name }}</td>
-            <td>{{ p.role }}</td>
-            <td>{% for cb_id, cb in CHI_BO_LIST.items() %}{% if u in cb.users %}{{ cb.name }}{% endif %}{% endfor %}</td>
+        <tr style="border:1px solid #4caf50;">
+            <td style="padding:10px;">{{ u }}</td>
+            <td style="padding:10px;">{{ p.name }}</td>
+            <td style="padding:10px;">{{ p.role }}</td>
+            <td style="padding:10px;">
+                {% for cb_id, cb in CHI_BO_LIST.items() %}
+                    {% if u in cb.users %}{{ cb.name }}{% endif %}
+                {% endfor %}
+            </td>
         </tr>
         {% endfor %}
     </table>
@@ -275,11 +277,11 @@ def admin_add_user():
         chi_bo_id = request.form.get("chi_bo_id")
         if username in USERS:
             flash("User đã tồn tại!", "danger")
-            return redirect(url_for("admin_add_user"))
-        USERS[username] = {"password": generate_password_hash(password), "role": role, "name": name}
-        if chi_bo_id and chi_bo_id in CHI_BO_LIST:
-            CHI_BO_LIST[chi_bo_id]["users"].append(username)
-        flash(f"Thêm user {username} thành công!", "success")
+        else:
+            USERS[username] = {"password": generate_password_hash(password), "role": role, "name": name}
+            if chi_bo_id and chi_bo_id in CHI_BO_LIST:
+                CHI_BO_LIST[chi_bo_id]["users"].append(username)
+            flash(f"Thêm user {username} thành công!", "success")
         return redirect(url_for("admin_users"))
     body = """
     <h2>Thêm Người dùng mới</h2>
@@ -302,6 +304,7 @@ def admin_add_user():
     """
     return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH, CHI_BO_LIST=CHI_BO_LIST)
 
+# Bí thư chi bộ
 @app.route("/bithu", methods=["GET", "POST"])
 @login_required("bithu")
 def bithu_home():
@@ -330,20 +333,28 @@ def bithu_home():
     body = """
     <h2>Trang Bí thư Chi bộ</h2>
     <p>Xin chào <strong>{{ user.name }}</strong> - {{ chi_bo_name }}</p>
+
     <h3>Đảng viên trong chi bộ</h3>
+    {% if chi_bo_users %}
     <ul>
-    {% for u in chi_bo_users %}
+        {% for u in chi_bo_users %}
         <li><strong>{{ USERS[u].name }} ({{ u }})</strong>
+            {% if NHAN_XET.get(u) %}
             <ul>
-            {% for nx in NHAN_XET.get(u, []) %}
-                <li>{{ nx.note }} <em>(bởi {{ USERS[nx.by].name }})</em></li>
-            {% else %}
-                <li><em>Chưa có nhận xét</em></li>
-            {% endfor %}
+                {% for nx in NHAN_XET[u] %}
+                <li>{{ nx.note }} <em>({{ USERS[nx.by].name }})</em></li>
+                {% endfor %}
             </ul>
+            {% else %}
+            <br><em>Chưa có nhận xét</em>
+            {% endif %}
         </li>
-    {% endfor %}
+        {% endfor %}
     </ul>
+    {% else %}
+    <p><em>Chưa có đảng viên nào</em></p>
+    {% endif %}
+
     <h3>Thêm nhận xét hoặc thông báo</h3>
     <form method="POST">
         <div>Nhận xét cho:<br><select name="dv_username">
@@ -351,24 +362,28 @@ def bithu_home():
             <option value="{{ u }}">{{ USERS[u].name }} ({{ u }})</option>
             {% endfor %}
         </select></div>
-        <div>Nội dung nhận xét:<br><input name="nhan_xet" style="width:500px;"></div>
-        <div>Thông báo chi bộ:<br><input name="thong_bao" style="width:500px;"></div><br>
+        <div>Nội dung nhận xét:<br><input name="nhan_xet"></div>
+        <div>Thông báo chi bộ:<br><input name="thong_bao"></div><br>
         <button type="submit">Gửi</button>
     </form>
+
     <h3>Thông báo chi bộ</h3>
+    {% if THONG_BAO.get(chi_bo_id) %}
     <ul>
-    {% for tb in THONG_BAO.get(chi_bo_id, []) %}
-        <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
-    {% else %}
-        <li><em>Chưa có thông báo</em></li>
-    {% endfor %}
+        {% for tb in THONG_BAO[chi_bo_id] %}
+        <li>{{ tb.note }} <em>({{ USERS[tb.by].name }})</em></li>
+        {% endfor %}
     </ul>
+    {% else %}
+    <p><em>Chưa có thông báo</em></p>
+    {% endif %}
     """
     return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH,
                                   user=user, chi_bo_name=chi_bo_name, chi_bo_users=chi_bo_users,
                                   USERS=USERS, NHAN_XET=NHAN_XET, THONG_BAO=THONG_BAO, chi_bo_id=chi_bo_id)
 
-@app.route("/dangvien")
+# Đảng viên - có Upload & Tóm tắt AI
+@app.route("/dangvien", methods=["GET", "POST"])
 @login_required("dangvien")
 def dangvien_home():
     user = session["user"]
@@ -379,33 +394,89 @@ def dangvien_home():
             chi_bo_name = cb["name"]
             chi_bo_id = cb_id
             break
+
     thong_bao_cb = THONG_BAO.get(chi_bo_id, [])
     nhan_xet_cb = NHAN_XET.get(user["username"], [])
+
+    summary = None
+    uploaded_filename = None
+
+    if request.method == "POST":
+        if 'file' not in request.files:
+            flash("Không có file được chọn!", "danger")
+        else:
+            file = request.files['file']
+            if file.filename == '':
+                flash("Không chọn file nào!", "danger")
+            elif not allowed_file(file.filename):
+                flash("Loại file không được phép! Chỉ hỗ trợ: txt, pdf, docx, csv, xlsx", "danger")
+            else:
+                filename = secure_filename(file.filename)
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                file.save(filepath)
+                text = read_file_text(filepath)
+                if not text.strip():
+                    flash("Không đọc được nội dung từ file!", "danger")
+                else:
+                    summary = vit5_summarize(text)
+                    if "Lỗi" in summary or "Không thể" in summary:
+                        flash(summary, "danger")
+                        summary = None
+                    else:
+                        flash("Tóm tắt thành công bằng AI ViT5!", "success")
+                    uploaded_filename = filename
+
     body = """
     <h2>Trang Đảng viên</h2>
-    <p>Xin chào <strong>{{ user.name }}</strong><br>Thuộc <strong>{{ chi_bo_name }}</strong></p>
-    <h3>Thông báo/Hoạt động chi bộ</h3>
+    <p>Xin chào <strong>{{ user.name }}</strong><br>
+    Thuộc <strong>{{ chi_bo_name or 'Chưa thuộc chi bộ nào' }}</strong></p>
+
+    <h3>Thông báo / Hoạt động chi bộ</h3>
+    {% if thong_bao_cb %}
     <ul>
-    {% for tb in thong_bao_cb %}
+        {% for tb in thong_bao_cb %}
         <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
-    {% else %}
-        <li><em>Chưa có thông báo</em></li>
-    {% endfor %}
+        {% endfor %}
     </ul>
+    {% else %}
+    <p><em>Chưa có thông báo</em></p>
+    {% endif %}
+
     <h3>Nhận xét từ Bí thư</h3>
+    {% if nhan_xet_cb %}
     <ul>
-    {% for nx in nhan_xet_cb %}
+        {% for nx in nhan_xet_cb %}
         <li>{{ nx.note }} <em>(bởi {{ USERS[nx.by].name }})</em></li>
-    {% else %}
-        <li><em>Chưa có nhận xét</em></li>
-    {% endfor %}
+        {% endfor %}
     </ul>
+    {% else %}
+    <p><em>Chưa có nhận xét</em></p>
+    {% endif %}
+
+    <h3>Upload tài liệu & Tóm tắt bằng AI (VietAI ViT5)</h3>
+    <p>Chọn file để upload và nhận tóm tắt tự động bằng AI tiếng Việt.</p>
+    <form method="POST" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".txt,.pdf,.docx,.csv,.xlsx" required><br><br>
+        <button type="submit">Upload và Tóm tắt</button>
+    </form>
+
+    {% if uploaded_filename %}
+    <p><strong>File đã upload:</strong> {{ uploaded_filename }}</p>
+    {% endif %}
+
+    {% if summary %}
+    <h4>Kết quả tóm tắt:</h4>
+    <div class="summary-box">
+        {{ summary }}
+    </div>
+    {% endif %}
     """
+
     return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH,
                                   user=user, chi_bo_name=chi_bo_name,
-                                  thong_bao_cb=thong_bao_cb, nhan_xet_cb=nhan_xet_cb, USERS=USERS)
+                                  thong_bao_cb=thong_bao_cb, nhan_xet_cb=nhan_xet_cb,
+                                  USERS=USERS, summary=summary, uploaded_filename=uploaded_filename)
 
-# Chỉ chạy local, không ảnh hưởng đến deploy trên Render
+# Chỉ chạy local
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
