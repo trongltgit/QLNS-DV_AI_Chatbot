@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Trang Đảng viên</h2>
+<p>Xin chào <strong>{{ user.name }}</strong><br>
+Thuộc <strong>{{ chi_bo_name }}</strong></p>
+
+<h3>Thông báo / Hoạt động chi bộ</h3>
+{% if thong_bao_cb %}
+<ul>
+    {% for tb in thong_bao_cb %}
+    <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
+    {% endfor %}
+</ul>
+{% else %}
+<p><em>Chưa có thông báo</em></p>
+{% endif %}
+
+<h3>Nhận xét từ Bí thư</h3>
+{% if nhan_xet_cb %}
+<ul>
+    {% for nx in nhan_xet_cb %}
+    <li>{{ nx.note }} <em>(bởi {{ USERS[nx.by].name }})</em></li>
+    {% endfor %}
+</ul>
+{% else %}
+<p><em>Chưa có nhận xét</em></p>
+{% endif %}
+
+<h3>Upload tài liệu</h3>
+<p>Upload file để xem nội dung (txt, pdf, docx, excel). Tóm tắt AI tạm thời chưa hỗ trợ trên bản miễn phí Render.</p>
+<form method="POST" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".txt,.pdf,.docx,.csv,.xlsx" required><br><br>
+    <button type="submit">Upload & Xem nội dung</button>
+</form>
+
+{% if uploaded_filename %}
+<h4>File đã upload: <strong>{{ uploaded_filename }}</strong></h4>
+{% if extracted_text %}
+<div class="content-box">{{ extracted_text }}</div>
+{% endif %}
+{% endif %}
+{% endblock %}
