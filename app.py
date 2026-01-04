@@ -1,3 +1,4 @@
+/app.py
 import os
 import re
 import unicodedata
@@ -20,17 +21,16 @@ try:
 except:
     pd = None
 
-# OpenAI
+# VietAI ViT5 offline summarizer
 try:
-    import openai
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-    OPENAI_AVAILABLE = bool(OPENAI_CLIENT)
-except:
-    OPENAI_CLIENT = None
-    OPENAI_AVAILABLE = False
-
-SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    tokenizer = AutoTokenizer.from_pretrained("VietAI/vit5-base")
+    model = AutoModelForSeq2SeqLM.from_pretrained("VietAI/vit5-base")
+    VIT5_AVAILABLE = True
+except Exception as e:
+    print("Không tải được VietAI ViT5:", e)
+    tokenizer = model = None
+    VIT5_AVAILABLE = False
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025")
@@ -49,7 +49,6 @@ USERS = {
     "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
     "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
 }
-
 DOCS = {}  # key=username, value=list of uploaded file info
 CHAT_HISTORY = {}
 NHAN_XET = {}  # key=username, value=list of nhận xét
@@ -92,44 +91,141 @@ def normalize_vietnamese(text):
     return " ".join(text.split())
 
 def read_file_text(path):
-    ext = path.rsplit(".",1)[1].lower()
+    ext = path.rsplit(".", 1)[1].lower()
     try:
-        if ext=="txt":
-            with open(path,"r",encoding="utf-8",errors="ignore") as f: return f.read()
-        if ext=="pdf" and PyPDF2:
-            text=[]
-            with open(path,"rb") as f:
-                reader=PyPDF2.PdfReader(f)
+        if ext == "txt":
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        if ext == "pdf" and PyPDF2:
+            text = []
+            with open(path, "rb") as f:
+                reader = PyPDF2.PdfReader(f)
                 for page in reader.pages:
                     t = page.extract_text() or ""
                     text.append(t)
             return "\n".join(text)
-        if ext=="docx" and docx:
+        if ext == "docx" and docx:
             doc_obj = docx.Document(path)
             return "\n".join([p.text for p in doc_obj.paragraphs])
-        if ext in ("csv","xlsx") and pd:
-            df = pd.read_csv(path) if ext=="csv" else pd.read_excel(path)
+        if ext in ("csv", "xlsx") and pd:
+            df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
             return df.head(30).to_string()
-    except:
-        return ""
+    except Exception as e:
+        print("Lỗi đọc file:", e)
     return ""
 
-def openai_summarize(text):
-    if not OPENAI_AVAILABLE or not text.strip():
-        return "Không thể tóm tắt (thiếu OpenAI hoặc nội dung rỗng)."
-    resp = OPENAI_CLIENT.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role":"user","content":"Tóm tắt ngắn gọn nội dung sau:\n\n"+text}],
-        max_tokens=200
+def vit5_summarize(text):
+    if not VIT5_AVAILABLE or not text.strip():
+        return "Không thể tóm tắt (ViT5 không khả dụng hoặc nội dung rỗng)."
+    
+    # Giới hạn độ dài đầu vào (ViT5-base max ~1024 tokens)
+    input_text = "tóm tắt: " + text[:2000]  # cắt ngắn để an toàn
+    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=512)
+    
+    summary_ids = model.generate(
+        inputs["input_ids"],
+        max_length=200,
+        num_beams=4,
+        early_stopping=True
     )
-    return resp.choices[0].message.content.strip()
+    summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    return summary.strip()
+
+# -------------------------
+# Base template với header xanh lá đẹp
+# -------------------------
+BASE_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ thống Quản lý Đảng viên</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            background: #f0f7f4; 
+            color: #333; 
+        }
+        header { 
+            background: linear-gradient(135deg, #2e7d32, #4caf50); 
+            color: white; 
+            padding: 20px 0; 
+            text-align: center; 
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2); 
+        }
+        header img { height: 80px; vertical-align: middle; }
+        header h1 { display: inline; margin-left: 20px; font-size: 2em; }
+        .container { 
+            max-width: 1100px; 
+            margin: 30px auto; 
+            padding: 30px; 
+            background: white; 
+            border-radius: 12px; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1); 
+            text-align: center; 
+        }
+        h2, h3 { color: #2e7d32; }
+        a { color: #2e7d32; text-decoration: none; font-weight: bold; }
+        a:hover { text-decoration: underline; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        table, th, td { border: 1px solid #4caf50; }
+        th { background: #4caf50; color: white; padding: 12px; }
+        td { padding: 10px; }
+        form { margin: 30px 0; }
+        input, select, button { 
+            padding: 10px; 
+            margin: 10px; 
+            border-radius: 6px; 
+            border: 1px solid #4caf50; 
+            font-size: 1em; 
+        }
+        button { 
+            background: #4caf50; 
+            color: white; 
+            cursor: pointer; 
+            font-weight: bold; 
+        }
+        button:hover { background: #388e3c; }
+        .flash { padding: 15px; margin: 20px 0; border-radius: 6px; }
+        .success { background: #e8f5e9; border-left: 5px solid #4caf50; }
+        .danger { background: #ffebee; border-left: 5px solid #f44336; }
+        ul { text-align: left; display: inline-block; }
+        .logout { position: absolute; top: 20px; right: 30px; }
+    </style>
+</head>
+<body>
+    <header>
+        <img src="{{ logo_path }}" alt="Logo">
+        <h1>HỆ THỐNG QUẢN LÝ ĐẢNG VIÊN</h1>
+        {% if session.user %}
+        <div class="logout"><a href="{{ url_for('logout') }}" style="color:white;">Đăng xuất ({{ session.user.name }})</a></div>
+        {% endif %}
+    </header>
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        {{ body_content|safe }}
+        <br><br>
+        <a href="{{ url_for('dashboard') }}">← Về trang chủ</a>
+    </div>
+</body>
+</html>
+"""
 
 # -------------------------
 # Routes: Auth
 # -------------------------
-@app.route("/", methods=["GET","POST"])
+@app.route("/", methods=["GET", "POST"])
 def login():
-    if request.method=="POST":
+    if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
         user = USERS.get(username)
@@ -139,22 +235,16 @@ def login():
             return redirect(url_for("dashboard"))
         else:
             flash("Sai username hoặc password!", "danger")
-    return render_template_string("""
-    <html><head><title>Login</title></head>
-    <body>
+
+    body = """
     <h2>Đăng nhập hệ thống</h2>
-    {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for cat, msg in messages %}
-    <p style="color:red">{{ msg }}</p>
-    {% endfor %}
-    {% endwith %}
     <form method="POST">
-        Username: <input name="username"><br>
-        Password: <input name="password" type="password"><br>
-        <button type="submit">Login</button>
+        <div>Tên đăng nhập:<br><input name="username" required style="width:300px;"></div><br>
+        <div>Mật khẩu:<br><input name="password" type="password" required style="width:300px;"></div><br>
+        <button type="submit">Đăng nhập</button>
     </form>
-    </body></html>
-    """)
+    """
+    return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH)
 
 @app.route("/logout")
 def logout():
@@ -169,9 +259,9 @@ def logout():
 def dashboard():
     user = session["user"]
     role = user["role"]
-    if role=="admin":
+    if role == "admin":
         return redirect(url_for("admin_users"))
-    elif role=="bithu":
+    elif role == "bithu":
         return redirect(url_for("bithu_home"))
     else:
         return redirect(url_for("dangvien_home"))
@@ -182,139 +272,153 @@ def dashboard():
 @app.route("/admin/users")
 @admin_required
 def admin_users():
-    return render_template_string("""
-    <h2>Quản lý Users</h2>
-    <a href="{{ url_for('admin_add_user') }}">Thêm user mới</a><br><br>
-    <table border=1>
-    <tr><th>Username</th><th>Họ tên</th><th>Role</th><th>Chi bộ</th></tr>
-    {% for u,p in USERS.items() %}
+    body = """
+    <h2>Quản lý Người dùng</h2>
+    <a href="{{ url_for('admin_add_user') }}">➕ Thêm người dùng mới</a><br><br>
+    <table>
+        <tr><th>Username</th><th>Họ tên</th><th>Vai trò</th><th>Chi bộ</th></tr>
+        {% for u, p in USERS.items() %}
         <tr>
-        <td>{{u}}</td>
-        <td>{{p.name}}</td>
-        <td>{{p.role}}</td>
-        <td>
-            {% for cb_id, cb in CHI_BO_LIST.items() %}
-                {% if u in cb.users %}{{cb.name}}{% endif %}
-            {% endfor %}
-        </td>
+            <td>{{ u }}</td>
+            <td>{{ p.name }}</td>
+            <td>{{ p.role }}</td>
+            <td>
+                {% for cb_id, cb in CHI_BO_LIST.items() %}
+                    {% if u in cb.users %}{{ cb.name }}{% endif %}
+                {% endfor %}
+            </td>
         </tr>
-    {% endfor %}
+        {% endfor %}
     </table>
-    """, USERS=USERS, CHI_BO_LIST=CHI_BO_LIST)
+    """
+    return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH, USERS=USERS, CHI_BO_LIST=CHI_BO_LIST)
 
-@app.route("/admin/add_user", methods=["GET","POST"])
+@app.route("/admin/add_user", methods=["GET", "POST"])
 @admin_required
 def admin_add_user():
-    if request.method=="POST":
+    if request.method == "POST":
         username = request.form.get("username").strip()
         name = request.form.get("name").strip()
         password = request.form.get("password").strip() or "Test@123"
         role = request.form.get("role")
-        chi_bo_id = request.form.get("chi_bo_id")  # gán chi bộ khi tạo user
-
+        chi_bo_id = request.form.get("chi_bo_id")
         if username in USERS:
             flash("User đã tồn tại!", "danger")
             return redirect(url_for("admin_add_user"))
-
         USERS[username] = {"password": generate_password_hash(password), "role": role, "name": name}
-
         if chi_bo_id and chi_bo_id in CHI_BO_LIST:
             CHI_BO_LIST[chi_bo_id]["users"].append(username)
-
         flash(f"Thêm user {username} thành công!", "success")
         return redirect(url_for("admin_users"))
-    
-    return render_template_string("""
-    <h2>Thêm User</h2>
+
+    body = """
+    <h2>Thêm Người dùng mới</h2>
     <form method="POST">
-        Username: <input name="username"><br>
-        Họ tên: <input name="name"><br>
-        Password: <input name="password" placeholder="Mặc định Test@123"><br>
-        Role: <select name="role">
-            <option value="dangvien">Đảng viên</option>
-            <option value="bithu">Bí thư chi bộ</option>
-        </select><br>
-        Chi bộ: <select name="chi_bo_id">
-            <option value="">--Chọn--</option>
-            {% for cb_id, cb in CHI_BO_LIST.items() %}
-            <option value="{{cb_id}}">{{cb['name']}}</option>
-            {% endfor %}
-        </select><br>
-        <button type="submit">Thêm user</button>
+        <div>Username:<br><input name="username" required></div>
+        <div>Họ tên:<br><input name="name" required></div>
+        <div>Mật khẩu (để trống dùng Test@123):<br><input name="password" type="password"></div>
+        <div>Vai trò:<br>
+            <select name="role">
+                <option value="dangvien">Đảng viên</option>
+                <option value="bithu">Bí thư chi bộ</option>
+            </select>
+        </div>
+        <div>Chi bộ:<br>
+            <select name="chi_bo_id">
+                <option value="">--Không chọn--</option>
+                {% for cb_id, cb in CHI_BO_LIST.items() %}
+                <option value="{{ cb_id }}">{{ cb.name }}</option>
+                {% endfor %}
+            </select>
+        </div><br>
+        <button type="submit">Thêm người dùng</button>
     </form>
-    """, CHI_BO_LIST=CHI_BO_LIST)
+    """
+    return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH, CHI_BO_LIST=CHI_BO_LIST)
 
 # -------------------------
 # Bí thư chi bộ
 # -------------------------
-@app.route("/bithu", methods=["GET","POST"])
+@app.route("/bithu", methods=["GET", "POST"])
 @login_required("bithu")
 def bithu_home():
     user = session["user"]
     chi_bo_users = []
     chi_bo_id = ""
+    chi_bo_name = ""
     for cb_id, cb in CHI_BO_LIST.items():
         if user["username"] in cb["users"]:
             chi_bo_users = cb["users"]
             chi_bo_id = cb_id
+            chi_bo_name = cb["name"]
             break
 
-    if request.method=="POST":
-        # Nhận xét đảng viên
+    if request.method == "POST":
         dv_username = request.form.get("dv_username")
         nhan_xet = request.form.get("nhan_xet")
-        if dv_username not in NHAN_XET:
-            NHAN_XET[dv_username] = []
-        NHAN_XET[dv_username].append({"by": user["username"], "note": nhan_xet})
-        # Thông báo chi bộ
+        if dv_username and nhan_xet:
+            if dv_username not in NHAN_XET:
+                NHAN_XET[dv_username] = []
+            NHAN_XET[dv_username].append({"by": user["username"], "note": nhan_xet})
+
         thong_bao = request.form.get("thong_bao")
         if thong_bao:
             if chi_bo_id not in THONG_BAO:
                 THONG_BAO[chi_bo_id] = []
             THONG_BAO[chi_bo_id].append({"by": user["username"], "note": thong_bao})
+
         flash("Cập nhật thành công!", "success")
         return redirect(url_for("bithu_home"))
 
-    return render_template_string("""
+    body = """
     <h2>Trang Bí thư Chi bộ</h2>
-    <p>Xin chào {{user.name}}</p>
+    <p>Xin chào <strong>{{ user.name }}</strong> - {{ chi_bo_name }}</p>
 
     <h3>Đảng viên trong chi bộ</h3>
     <ul>
     {% for u in chi_bo_users %}
-        <li>{{USERS[u].name}} ({{u}})</li>
-        <ul>
-        {% if NHAN_XET.get(u) %}
-            {% for nx in NHAN_XET[u] %}
-            <li>Nhận xét: {{nx.note}} (bởi {{USERS[nx.by].name}})</li>
-            {% endfor %}
-        {% endif %}
-        </ul>
+        <li><strong>{{ USERS[u].name }} ({{ u }})</strong>
+            <ul>
+            {% if NHAN_XET.get(u) %}
+                {% for nx in NHAN_XET[u] %}
+                <li>{{ nx.note }} <em>(bởi {{ USERS[nx.by].name }})</em></li>
+                {% endfor %}
+            {% else %}
+                <li><em>Chưa có nhận xét</em></li>
+            {% endif %}
+            </ul>
+        </li>
     {% endfor %}
     </ul>
 
-    <h3>Thêm nhận xét hoặc thông báo</h3>
+    <h3>Thêm nhận xét hoặc thông báo chi bộ</h3>
     <form method="POST">
-        Nhận xét đảng viên: 
-        <select name="dv_username">
-            {% for u in chi_bo_users %}
-                <option value="{{u}}">{{USERS[u].name}} ({{u}})</option>
-            {% endfor %}
-        </select><br>
-        Nội dung nhận xét: <input name="nhan_xet"><br>
-        Thông báo chi bộ: <input name="thong_bao"><br>
+        <div>Nhận xét cho đảng viên:<br>
+            <select name="dv_username">
+                {% for u in chi_bo_users %}
+                <option value="{{ u }}">{{ USERS[u].name }} ({{ u }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>Nội dung nhận xét:<br><input name="nhan_xet" style="width:500px;"></div>
+        <div>Thông báo/Hoạt động chi bộ:<br><input name="thong_bao" style="width:500px;"></div><br>
         <button type="submit">Gửi</button>
     </form>
 
-    <h3>Thông báo/hoạt động chi bộ</h3>
+    <h3>Thông báo/Hoạt động chi bộ</h3>
     <ul>
     {% if THONG_BAO.get(chi_bo_id) %}
         {% for tb in THONG_BAO[chi_bo_id] %}
-            <li>{{tb.note}} (bởi {{USERS[tb.by].name}})</li>
+            <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
         {% endfor %}
+    {% else %}
+        <li><em>Chưa có thông báo</em></li>
     {% endif %}
     </ul>
-    """, user=user, chi_bo_users=chi_bo_users, USERS=USERS, NHAN_XET=NHAN_XET, THONG_BAO=THONG_BAO, chi_bo_id=chi_bo_id)
+    """
+    return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH,
+                                  user=user, chi_bo_name=chi_bo_name, chi_bo_users=chi_bo_users,
+                                  USERS=USERS, NHAN_XET=NHAN_XET, THONG_BAO=THONG_BAO, chi_bo_id=chi_bo_id)
 
 # -------------------------
 # Đảng viên
@@ -330,29 +434,43 @@ def dangvien_home():
             chi_bo_name = cb["name"]
             chi_bo_id = cb_id
             break
+
     thong_bao_cb = THONG_BAO.get(chi_bo_id, [])
     nhan_xet_cb = NHAN_XET.get(user["username"], [])
-    return render_template_string("""
+
+    body = """
     <h2>Trang Đảng viên</h2>
-    <p>Xin chào {{user.name}} (Chi bộ: {{chi_bo_name}})</p>
+    <p>Xin chào <strong>{{ user.name }}</strong><br>
+    Thuộc <strong>{{ chi_bo_name }}</strong></p>
 
-    <h3>Thông báo/hoạt động chi bộ</h3>
+    <h3>Thông báo/Hoạt động chi bộ</h3>
     <ul>
-    {% for tb in thong_bao_cb %}
-        <li>{{tb.note}} (bởi {{USERS[tb.by].name}})</li>
-    {% endfor %}
+    {% if thong_bao_cb %}
+        {% for tb in thong_bao_cb %}
+            <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
+        {% endfor %}
+    {% else %}
+        <li><em>Chưa có thông báo</em></li>
+    {% endif %}
     </ul>
 
-    <h3>Nhận xét của Bí thư</h3>
+    <h3>Nhận xét từ Bí thư</h3>
     <ul>
-    {% for nx in nhan_xet_cb %}
-        <li>{{nx.note}} (bởi {{USERS[nx.by].name}})</li>
-    {% endfor %}
+    {% if nhan_xet_cb %}
+        {% for nx in nhan_xet_cb %}
+            <li>{{ nx.note }} <em>(bởi {{ USERS[nx.by].name }})</em></li>
+        {% endfor %}
+    {% else %}
+        <li><em>Chưa có nhận xét</em></li>
+    {% endif %}
     </ul>
-    """, user=user, chi_bo_name=chi_bo_name, thong_bao_cb=thong_bao_cb, nhan_xet_cb=nhan_xet_cb, USERS=USERS)
+    """
+    return render_template_string(BASE_TEMPLATE, body_content=body, logo_path=LOGO_PATH,
+                                  user=user, chi_bo_name=chi_bo_name,
+                                  thong_bao_cb=thong_bao_cb, nhan_xet_cb=nhan_xet_cb, USERS=USERS)
 
 # -------------------------
 # Run
 # -------------------------
-if __name__=="__main__":
+if __name__ == "__main__":
     app.run(debug=True)
