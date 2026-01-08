@@ -5,8 +5,7 @@
 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
     <section>
         <h4>Thêm Người dùng</h4>
-        <form action="{{ url_for('admin_add_user') }}" method="POST">
-            <input type="text" name="username" placeholder="Username" required style="width:90%; padding:8px; margin-bottom:10px;"><br>
+        <form action="{{ url_for('admin_add') }}" method="POST"> <input type="text" name="username" placeholder="Username" required style="width:90%; padding:8px; margin-bottom:10px;"><br>
             <input type="text" name="name" placeholder="Họ và tên" required style="width:90%; padding:8px; margin-bottom:10px;"><br>
             <input type="password" name="password" placeholder="Mật khẩu" required style="width:90%; padding:8px; margin-bottom:10px;"><br>
             <select name="role" style="width:94%; padding:8px; margin-bottom:10px;">
@@ -18,7 +17,7 @@
                 <option value="{{ cid }}">{{ cb.name }}</option>
                 {% endfor %}
             </select><br>
-            <button type="submit">Tạo tài khoản</button>
+            <button type="submit" class="btn btn-green">Tạo tài khoản</button>
         </form>
     </section>
 
@@ -33,7 +32,7 @@
                 <option value="{{ cid }}">{{ cb.name }}</option>
                 {% endfor %}
             </select><br>
-            <button type="submit">Xác nhận chuyển</button>
+            <button type="submit" class="btn">Xác nhận chuyển</button>
         </form>
     </section>
 </div>
@@ -53,8 +52,8 @@
         <td>{{ info.name }}</td>
         <td>{{ info.role }}</td>
         <td>
-            <a href="{{ url_for('admin_reset_pw', username=u) }}" class="btn" style="background:#fbc02d; color:black;">Reset PW</a>
-            <a href="{{ url_for('admin_delete', username=u) }}" class="btn btn-red" onclick="return confirm('Xóa?')">Xóa</a>
+            <a href="{{ url_for('admin_reset_pw', username=u) }}" class="btn" style="background:#fbc02d; color:black; padding: 5px 10px; font-size: 0.8em;">Reset PW</a>
+            <a href="{{ url_for('admin_delete', username=u) }}" class="btn btn-red" style="padding: 5px 10px; font-size: 0.8em;" onclick="return confirm('Xóa?')">Xóa</a>
         </td>
     </tr>
     {% endfor %}
