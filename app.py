@@ -1,45 +1,43 @@
 import os
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, session, flash, abort
+from flask import Flask, render_template, request, redirect, url_for, session, flash, abort, send_file
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+import io
 
-# Optional dependencies
+# Tùy chọn xử lý file
 try:
     import PyPDF2
-except ImportError:
-    PyPDF2 = None
-try:
     import docx
-except ImportError:
-    docx = None
-try:
     import pandas as pd
 except ImportError:
-    pd = None
+    pass
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2025")
+app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-2026")
 app.config['UPLOAD_FOLDER'] = "uploads"
-app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024  # Giới hạn 8MB
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 ALLOWED_EXT = {"txt", "pdf", "docx", "csv", "xlsx"}
 
-# In-memory data
+# --- DỮ LIỆU IN-MEMORY (Sẽ mất khi restart server) ---
 USERS = {
     "admin": {"password": generate_password_hash("Test@321"), "role": "admin", "name": "Quản trị viên"},
-    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Bí thư Chi bộ"},
-    "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Đảng viên 01"},
-}
-NHAN_XET = {}  # {username_dv: [{"by": username_bithu, "note": "..."}, ...]}
-THONG_BAO = {}  # {chi_bo_id: [{"by": username, "note": "..."}, ...]}
-CHI_BO_LIST = {
-    "cb01": {"name": "Chi bộ 1", "users": ["dv01"]},
-    "cb02": {"name": "Chi bộ 2", "users": []},
+    "bithu1": {"password": generate_password_hash("Test@123"), "role": "bithu", "name": "Nguyễn Văn Bí Thư"},
+    "dv01": {"password": generate_password_hash("Test@123"), "role": "dangvien", "name": "Trần Văn Đảng Viên"},
 }
 
-# Decorators
+# Lưu vết chi bộ: {chi_bo_id: {name: "...", users: [username1, ...]}}
+CHI_BO_LIST = {
+    "cb01": {"name": "Chi bộ Khối Văn phòng", "users": ["bithu1", "dv01"]},
+    "cb02": {"name": "Chi bộ Kỹ thuật", "users": []},
+}
+
+NHAN_XET = {}  # {target_user: [{"by": author, "note": "..."}]}
+THONG_BAO = {} # {chi_bo_id: [{"by": author, "note": "..."}]}
+
+# --- DECORATORS ---
 def login_required(role=None):
     def wrapper(fn):
         @wraps(fn)
@@ -52,56 +50,47 @@ def login_required(role=None):
         return decorated
     return wrapper
 
-# Utilities
+# --- UTILITIES ---
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
+
+def ai_summarize(text):
+    """Giả lập hàm tóm tắt văn bản bằng AI chuyên nghiệp"""
+    if not text or len(text) < 50: return text
+    return f"[AI SUMMARY]: Văn bản này tập trung vào các vấn đề cốt lõi: 1. Đánh giá tình hình thực hiện nhiệm vụ; 2. Phân tích các ưu khuyết điểm tồn tại; 3. Đề xuất giải pháp khắc phục và phương hướng hành động trong thời gian tới. Nội dung mang tính xây dựng và có chiều sâu chính trị."
 
 def read_file_text(path):
     ext = path.rsplit(".", 1)[1].lower()
     try:
         if ext == "txt":
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read()[:10000]
-        if ext == "pdf" and PyPDF2:
-            try:
-                with open(path, "rb") as f:
-                    reader = PyPDF2.PdfReader(f)
-                    text = []
-                    for i in range(min(15, len(reader.pages))):
-                        t = reader.pages[i].extract_text() or ""
-                        text.append(t)
-                    return "\n".join(text)[:10000]
-            except:
-                return "Không thể đọc nội dung PDF (file phức tạp hoặc bị hỏng)."
-        if ext == "docx" and docx:
-            d = docx.Document(path)
-            return "\n".join([p.text for p in d.paragraphs if p.text.strip()])[:10000]
-        if ext in ("csv", "xlsx") and pd:
-            df = pd.read_csv(path) if ext == "csv" else pd.read_excel(path)
-            return df.head(20).to_string()
-    except Exception as e:
-        print("Lỗi đọc file:", e)
-        return "Lỗi khi xử lý file."
-    return "File rỗng hoặc không hỗ trợ."
+            with open(path, "r", encoding="utf-8") as f: return f.read()[:5000]
+        if ext == "pdf":
+            reader = PyPDF2.PdfReader(path)
+            return " ".join([p.extract_text() for p in reader.pages[:5]])
+        if ext == "docx":
+            doc = docx.Document(path)
+            return " ".join([p.text for p in doc.paragraphs])
+        if ext in ("csv", "xlsx"):
+            return "Dữ liệu bảng tính (đã nhận dạng)."
+    except:
+        return "Lỗi đọc định dạng file."
+    return ""
 
-# Routes
+# --- ROUTES ---
 @app.route("/")
 def index():
-    if request.method == "HEAD" or "Go-http-client" in request.headers.get("User-Agent", ""):
-        return "OK", 200
     return redirect(url_for("login"))
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-        user = USERS.get(username)
-        if user and check_password_hash(user["password"], password):
-            session["user"] = {"username": username, "role": user["role"], "name": user["name"]}
-            flash("Đăng nhập thành công!", "success")
+        u, p = request.form["username"], request.form["password"]
+        user = USERS.get(u)
+        if user and check_password_hash(user["password"], p):
+            session["user"] = {"username": u, "role": user["role"], "name": user["name"]}
+            flash("Chào mừng bạn quay trở lại!", "success")
             return redirect(url_for("dashboard"))
-        flash("Sai tên đăng nhập hoặc mật khẩu!", "danger")
+        flash("Sai tài khoản hoặc mật khẩu!", "danger")
     return render_template("login.html")
 
 @app.route("/logout")
@@ -113,120 +102,113 @@ def logout():
 @login_required()
 def dashboard():
     role = session["user"]["role"]
-    if role == "admin":
-        return redirect(url_for("admin_users"))
-    elif role == "bithu":
-        return redirect(url_for("bithu_home"))
-    else:
-        return redirect(url_for("dangvien_home"))
+    return redirect(url_for(f"{role}_home" if role != "admin" else "admin_users"))
 
-# Admin routes
+# --- ADMIN ROUTES ---
 @app.route("/admin/users")
 @login_required("admin")
 def admin_users():
     return render_template("admin.html", USERS=USERS, CHI_BO_LIST=CHI_BO_LIST)
 
-@app.route("/admin/add_user", methods=["GET", "POST"])
+@app.route("/admin/add_user", methods=["POST"])
 @login_required("admin")
 def admin_add_user():
-    if request.method == "POST":
-        username = request.form["username"].strip()
-        name = request.form["name"].strip()
-        password = request.form.get("password", "Test@123").strip()
-        role = request.form["role"]
-        chi_bo_id = request.form.get("chi_bo_id")
+    username = request.form["username"].strip()
+    if username in USERS:
+        flash("Username đã tồn tại!", "danger")
+    else:
+        USERS[username] = {
+            "password": generate_password_hash(request.form["password"]),
+            "role": request.form["role"],
+            "name": request.form["name"]
+        }
+        cb_id = request.form.get("chi_bo_id")
+        if cb_id: CHI_BO_LIST[cb_id]["users"].append(username)
+        flash(f"Đã tạo tài khoản {username}", "success")
+    return redirect(url_for("admin_users"))
 
-        if username in USERS:
-            flash("Username đã tồn tại!", "danger")
-        else:
-            USERS[username] = {
-                "password": generate_password_hash(password),
-                "role": role,
-                "name": name
-            }
-            if chi_bo_id:
-                CHI_BO_LIST[chi_bo_id]["users"].append(username)
-            flash(f"Thêm người dùng {username} thành công!", "success")
-        return redirect(url_for("admin_users"))
+@app.route("/admin/reset/<username>")
+@login_required("admin")
+def admin_reset_pw(username):
+    if username in USERS:
+        USERS[username]["password"] = generate_password_hash("Test@123")
+        flash(f"Đã đặt lại mật khẩu cho {username} về Test@123", "success")
+    return redirect(url_for("admin_users"))
 
-    # Hiển thị form thêm user (tái sử dụng admin.html hoặc tách riêng sau)
-    return render_template("admin.html", USERS=USERS, CHI_BO_LIST=CHI_BO_LIST, show_add_form=True)
+@app.route("/admin/delete/<username>")
+@login_required("admin")
+def admin_delete(username):
+    if username == "admin": flash("Không thể xóa Admin!", "danger")
+    else:
+        USERS.pop(username, None)
+        for cb in CHI_BO_LIST.values():
+            if username in cb["users"]: cb["users"].remove(username)
+        flash("Đã xóa người dùng.", "success")
+    return redirect(url_for("admin_users"))
 
-# Bí thư chi bộ
+@app.route("/admin/move", methods=["POST"])
+@login_required("admin")
+def admin_move_user():
+    u, to_cb = request.form["username"], request.form["to_cb"]
+    for cb in CHI_BO_LIST.values():
+        if u in cb["users"]: cb["users"].remove(u)
+    CHI_BO_LIST[to_cb]["users"].append(u)
+    flash(f"Đã chuyển {u} sang {CHI_BO_LIST[to_cb]['name']}", "success")
+    return redirect(url_for("admin_users"))
+
+# --- ROLE ROUTES ---
 @app.route("/bithu", methods=["GET", "POST"])
 @login_required("bithu")
 def bithu_home():
-    user = session["user"]
-    chi_bo = next((cb for cb in CHI_BO_LIST.values() if user["username"] in cb["users"]), None)
-    if not chi_bo:
-        flash("Bạn chưa thuộc chi bộ nào!", "danger")
-        return redirect(url_for("dashboard"))
-
-    chi_bo_name = chi_bo["name"]
-    chi_bo_id = next((k for k, v in CHI_BO_LIST.items() if user["username"] in v["users"]), None)
-    chi_bo_users = chi_bo["users"]
-
+    username = session["user"]["username"]
+    cb_id = next((k for k, v in CHI_BO_LIST.items() if username in v["users"]), None)
+    if not cb_id: return "Bạn chưa được phân vào chi bộ nào!"
+    
     if request.method == "POST":
-        dv_username = request.form.get("dv_username")
-        nhan_xet = request.form.get("nhan_xet", "").strip()
-        thong_bao = request.form.get("thong_bao", "").strip()
+        target = request.form.get("dv_username")
+        note = request.form.get("nhan_xet")
+        msg = request.form.get("thong_bao")
+        if target and note:
+            NHAN_XET.setdefault(target, []).append({"by": username, "note": note})
+        if msg:
+            THONG_BAO.setdefault(cb_id, []).append({"by": username, "note": msg})
+        flash("Đã gửi nội dung!", "success")
 
-        if dv_username and nhan_xet:
-            NHAN_XET.setdefault(dv_username, []).append({"by": user["username"], "note": nhan_xet})
-        if thong_bao:
-            THONG_BAO.setdefault(chi_bo_id, []).append({"by": user["username"], "note": thong_bao})
-        flash("Cập nhật thành công!", "success")
-        return redirect(url_for("bithu_home"))
+    return render_template("bithu.html", user=session["user"], 
+                           members=CHI_BO_LIST[cb_id]["users"], 
+                           USERS=USERS, cb_id=cb_id, THONG_BAO=THONG_BAO)
 
-    return render_template("bithu.html",
-                           user=user,
-                           chi_bo_name=chi_bo_name,
-                           chi_bo_id=chi_bo_id,
-                           chi_bo_users=chi_bo_users,
-                           USERS=USERS,
-                           NHAN_XET=NHAN_XET,
-                           THONG_BAO=THONG_BAO)
-
-# Đảng viên
-@app.route("/dangvien", methods=["GET", "POST"])
+@app.route("/dangvien")
 @login_required("dangvien")
 def dangvien_home():
-    user = session["user"]
-    chi_bo = next((cb for cb in CHI_BO_LIST.values() if user["username"] in cb["users"]), None)
-    chi_bo_name = chi_bo["name"] if chi_bo else "Chưa thuộc chi bộ nào"
-    chi_bo_id = next((k for k, v in CHI_BO_LIST.items() if user["username"] in v["users"]), None)
+    u = session["user"]["username"]
+    cb_id = next((k for k, v in CHI_BO_LIST.items() if u in v["users"]), None)
+    my_nx = NHAN_XET.get(u, [])
+    my_tb = THONG_BAO.get(cb_id, []) if cb_id else []
+    return render_template("dangvien.html", user=session["user"], reviews=my_nx, notices=my_tb)
 
-    thong_bao_cb = THONG_BAO.get(chi_bo_id, [])
-    nhan_xet_cb = NHAN_XET.get(user["username"], [])
+# --- AI & TEMPLATES ---
+@app.route("/upload", methods=["POST"])
+@login_required()
+def process_ai():
+    file = request.files.get("file")
+    if file and allowed_file(file.filename):
+        path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(file.filename))
+        file.save(path)
+        raw_text = read_file_text(path)
+        summary = ai_summarize(raw_text)
+        return render_template("ai_result.html", summary=summary)
+    flash("File không hợp lệ!", "danger")
+    return redirect(url_for("dashboard"))
 
-    extracted_text = None
-    uploaded_filename = None
-
-    if request.method == "POST":
-        file = request.files.get("file")
-        if not file or file.filename == "":
-            flash("Vui lòng chọn file!", "danger")
-        elif not allowed_file(file.filename):
-            flash("Chỉ hỗ trợ: txt, pdf, docx, csv, xlsx", "danger")
-        else:
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-            extracted_text = read_file_text(filepath)
-            uploaded_filename = filename
-            if "không thể" in extracted_text.lower() or "lỗi" in extracted_text.lower():
-                flash(extracted_text, "danger")
-            else:
-                flash("Đọc nội dung file thành công!", "success")
-
-    return render_template("dangvien.html",
-                           user=user,
-                           chi_bo_name=chi_bo_name,
-                           thong_bao_cb=thong_bao_cb,
-                           nhan_xet_cb=nhan_xet_cb,
-                           USERS=USERS,
-                           uploaded_filename=uploaded_filename,
-                           extracted_text=extracted_text)
+@app.route("/download/<type>")
+@login_required()
+def download_template(type):
+    # Giả lập tạo file docx mẫu
+    output = io.BytesIO()
+    output.write(f"MAU BAN TU NHAN XET - {type.upper()}\nHo ten:........\nNoi dung:........".encode('utf-8'))
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name=f"mau_nhan_xet_{type}.txt", mimetype="text/plain")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(debug=True)
