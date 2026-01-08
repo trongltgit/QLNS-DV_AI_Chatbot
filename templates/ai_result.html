@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<h3>Kết quả phân tích từ AI</h3>
+<div class="ai-box" style="font-size:1.1em; line-height:1.8;">
+    {{ summary }}
+</div>
+<hr>
+<a href="{{ url_for('dashboard') }}" class="btn">Quay lại</a>
+{% endblock %}
