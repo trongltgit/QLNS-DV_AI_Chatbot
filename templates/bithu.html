@@ -3,11 +3,10 @@
 <h3>Trang Bí thư Chi bộ</h3>
 <p>Chi bộ: <strong>{{ cb_id }}</strong></p>
 
-<div class="ai-box">
+<div style="background: #e8f5e9; padding: 20px; border-radius: 8px; border: 1px solid #c8e6c9; margin-bottom: 20px;">
     <h4>AI Hỗ trợ Tóm tắt Văn bản</h4>
-    <form action="{{ url_for('process_ai') }}" method="POST" enctype="multipart/form-data">
-        <input type="file" name="file" required>
-        <button type="submit">Tóm tắt ngay</button>
+    <form action="{{ url_for('upload_file') }}" method="POST" enctype="multipart/form-data"> <input type="file" name="file" required>
+        <button type="submit" class="btn btn-green">Tóm tắt ngay</button>
     </form>
 </div>
 
@@ -16,24 +15,28 @@
 </div>
 
 <h4>Gửi thông báo & Nhận xét</h4>
-<form method="POST">
+<form method="POST" style="background: #fff; padding: 15px; border: 1px solid #eee; border-radius: 8px;">
     <label>Nhận xét cho:</label>
-    <select name="dv_username">
+    <select name="dv_username" style="padding: 8px; width: 200px;">
         {% for m in members %}
         <option value="{{ m }}">{{ USERS[m].name }}</option>
         {% endfor %}
     </select><br><br>
-    <textarea name="nhan_xet" placeholder="Nội dung nhận xét..." style="width:100%; height:60px;"></textarea><br><br>
+    
+    <textarea name="nhan_xet" placeholder="Nội dung nhận xét cho đảng viên..." style="width:100%; height:80px; padding: 10px;"></textarea><br><br>
     
     <label>Thông báo toàn chi bộ:</label><br>
-    <textarea name="thong_bao" placeholder="Nội dung thông báo..." style="width:100%; height:60px;"></textarea><br><br>
-    <button type="submit">Gửi nội dung</button>
+    <textarea name="thong_bao" placeholder="Nội dung thông báo chung..." style="width:100%; height:80px; padding: 10px;"></textarea><br><br>
+    
+    <button type="submit" class="btn btn-green">Gửi nội dung</button>
 </form>
 
 <h4>Lịch sử thông báo</h4>
-<ul>
+<ul style="margin-top: 15px;">
     {% for tb in THONG_BAO.get(cb_id, []) %}
-    <li>{{ tb.note }} ({{ tb.by }})</li>
+    <li style="margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px;">
+        {{ tb.note }} <small style="color: #666;">- {{ tb.by }}</small>
+    </li>
     {% endfor %}
 </ul>
 {% endblock %}
