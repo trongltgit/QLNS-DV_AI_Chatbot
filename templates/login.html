@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 
 {% block content %}
+<div style="text-align: center; margin-top: 40px; margin-bottom: -30px;">
+    <img src="{{ url_for('static', filename='Logo.png') }}" 
+         alt="Logo" 
+         style="height: 100px; width: auto; filter: drop-shadow(0px 4px 8px rgba(0,0,0,0.1));">
+</div>
+
 <div style="max-width: 400px; margin: 50px auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 12px; background: #ffffff; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
     <h2 style="text-align: center; color: #2e7d32; margin-bottom: 25px;">ĐĂNG NHẬP</h2>
     
@@ -36,7 +42,7 @@
         transform: translateY(-1px);
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
-    /* Chỉnh lại link "Về trang chủ" ở base.html cho trang login vì không cần thiết */
+    /* Ẩn các link không cần thiết từ base.html */
     .container > a {
         display: none;
     }
