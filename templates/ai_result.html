@@ -1,9 +1,44 @@
 {% extends "base.html" %}
+
 {% block content %}
-<h3>Kết quả phân tích từ AI</h3>
-<div class="ai-box" style="font-size:1.1em; line-height:1.8;">
+<h3 style="color: #2e7d32; border-bottom: 2px solid #2e7d32; padding-bottom: 10px;">
+    <i class="fas fa-robot"></i> KẾT QUẢ PHÂN TÍCH TỪ AI
+</h3>
+
+<div class="ai-box" style="
+    font-size: 1.1em; 
+    line-height: 1.8; 
+    background: #f1f8e9; 
+    padding: 25px; 
+    border-radius: 12px; 
+    border-left: 6px solid #2e7d32; 
+    margin: 20px 0;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+    white-space: pre-wrap; /* Giữ nguyên các dòng kẻ và định dạng của AI */
+">
     {{ summary }}
 </div>
-<hr>
-<a href="{{ url_for('dashboard') }}" class="btn">Quay lại</a>
+
+<div style="margin-top: 30px;">
+    <hr style="border: 0; border-top: 1px solid #eee; margin-bottom: 20px;">
+    <a href="{{ url_for('dashboard') }}" class="btn" style="
+        display: inline-block;
+        padding: 10px 25px;
+        background: #666;
+        color: white;
+        text-decoration: none;
+        border-radius: 6px;
+        font-weight: bold;
+        transition: 0.3s;
+    ">
+        ← Quay lại Bảng điều khiển
+    </a>
+</div>
+
+<style>
+    .btn:hover {
+        background: #444;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+</style>
 {% endblock %}
