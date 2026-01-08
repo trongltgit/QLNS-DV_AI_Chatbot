@@ -1,55 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Trang Bí thư Chi bộ</h2>
-<p>Xin chào <strong>{{ user.name }}</strong> - {{ chi_bo_name }}</p>
+<h3>Trang Bí thư Chi bộ</h3>
+<p>Chi bộ: <strong>{{ cb_id }}</strong></p>
 
-<h3>Đảng viên trong chi bộ</h3>
-{% if chi_bo_users %}
-<ul>
-    {% for u in chi_bo_users %}
-    <li><strong>{{ USERS[u].name }} ({{ u }})</strong>
-        {% if NHAN_XET.get(u) %}
-        <ul>
-            {% for nx in NHAN_XET[u] %}
-            <li>{{ nx.note }} <em>({{ USERS[nx.by].name }})</em></li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <br><em>Chưa có nhận xét</em>
-        {% endif %}
-    </li>
-    {% endfor %}
-</ul>
-{% else %}
-<p><em>Chưa có đảng viên nào trong chi bộ</em></p>
-{% endif %}
+<div class="ai-box">
+    <h4>AI Hỗ trợ Tóm tắt Văn bản</h4>
+    <form action="{{ url_for('process_ai') }}" method="POST" enctype="multipart/form-data">
+        <input type="file" name="file" required>
+        <button type="submit">Tóm tắt ngay</button>
+    </form>
+</div>
 
-<h3>Thêm nhận xét hoặc thông báo</h3>
+<div style="margin-bottom:20px;">
+    <a href="{{ url_for('download_template', type='bi_thu') }}" class="btn">Tải Template Nhận xét (Word)</a>
+</div>
+
+<h4>Gửi thông báo & Nhận xét</h4>
 <form method="POST">
-    <label>Nhận xét cho đảng viên:</label><br>
-    <select name="dv_username" required>
-        {% for u in chi_bo_users %}
-        <option value="{{ u }}">{{ USERS[u].name }} ({{ u }})</option>
+    <label>Nhận xét cho:</label>
+    <select name="dv_username">
+        {% for m in members %}
+        <option value="{{ m }}">{{ USERS[m].name }}</option>
         {% endfor %}
     </select><br><br>
+    <textarea name="nhan_xet" placeholder="Nội dung nhận xét..." style="width:100%; height:60px;"></textarea><br><br>
     
-    <label>Nội dung nhận xét:</label><br>
-    <textarea name="nhan_xet" rows="3" style="width:100%; padding:10px;"></textarea><br><br>
-    
-    <label>Thông báo cho toàn chi bộ:</label><br>
-    <textarea name="thong_bao" rows="3" style="width:100%; padding:10px;"></textarea><br><br>
-    
-    <button type="submit">Gửi</button>
+    <label>Thông báo toàn chi bộ:</label><br>
+    <textarea name="thong_bao" placeholder="Nội dung thông báo..." style="width:100%; height:60px;"></textarea><br><br>
+    <button type="submit">Gửi nội dung</button>
 </form>
 
-<h3>Thông báo chi bộ</h3>
-{% if THONG_BAO.get(chi_bo_id) %}
+<h4>Lịch sử thông báo</h4>
 <ul>
-    {% for tb in THONG_BAO[chi_bo_id] %}
-    <li>{{ tb.note }} <em>(bởi {{ USERS[tb.by].name }})</em></li>
+    {% for tb in THONG_BAO.get(cb_id, []) %}
+    <li>{{ tb.note }} ({{ tb.by }})</li>
     {% endfor %}
 </ul>
-{% else %}
-<p><em>Chưa có thông báo</em></p>
-{% endif %}
 {% endblock %}
