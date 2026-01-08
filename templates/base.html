@@ -3,32 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quản lý Đảng viên</title>
+    <title>Hệ thống Quản lý Đảng viên AI</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background:#f0f7f4; margin:0; }
-        header { background: linear-gradient(135deg,#1b5e20,#43a047); color:white; padding:15px 5%; display:flex; justify-content:space-between; align-items:center; }
-        .container { max-width:1000px; margin:20px auto; background:white; padding:30px; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.1); }
-        .flash { padding:12px; margin-bottom:20px; border-radius:4px; }
-        .success { background:#e8f5e9; color:#2e7d32; border:1px solid #c8e6c9; }
-        .danger { background:#ffebee; color:#c62828; border:1px solid #ffcdd2; }
-        table { width:100%; border-collapse:collapse; margin:15px 0; }
-        th, td { border:1px solid #ddd; padding:10px; text-align:left; }
-        th { background:#f5f5f5; }
-        button, .btn { background:#2e7d32; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer; text-decoration:none; font-size:14px; }
-        .btn-red { background:#c62828; }
-        .ai-box { background:#e3f2fd; border-left:5px solid #2196f3; padding:15px; margin:20px 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin:0; padding:0; background:#f4f7f6; color:#333; }
+        header { 
+            background: linear-gradient(135deg, #1b5e20, #2e7d32); 
+            color: white; 
+            padding: 10px 5%; 
+            display: flex; 
+            align-items: center; 
+            justify-content: space-between; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+        .logo-container { display: flex; align-items: center; }
+        .logo-img { 
+            height: 70px; /* Kích thước logo vừa đủ lớn để thấy rõ */
+            width: auto; 
+            margin-right: 20px;
+            filter: drop-shadow(0px 0px 5px rgba(255,255,255,0.3));
+        }
+        header h1 { font-size: 1.4rem; margin: 0; text-transform: uppercase; letter-spacing: 1px; }
+        .container { max-width: 1100px; margin: 30px auto; padding: 25px; background: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        .flash { padding: 15px; margin-bottom: 20px; border-radius: 8px; font-weight: 500; }
+        .success { background: #d4edda; color: #155724; border-left: 5px solid #28a745; }
+        .danger { background: #f8d7da; color: #721c24; border-left: 5px solid #dc3545; }
+        .btn { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; transition: 0.3s; }
+        .btn-green { background: #2e7d32; color: white; }
+        .btn-green:hover { background: #1b5e20; }
+        .btn-red { background: #c62828; color: white; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; border: 1px solid #eee; text-align: left; }
+        th { background: #f8f9fa; color: #2e7d32; }
     </style>
 </head>
 <body>
     <header>
-        <h2>HỆ THỐNG QUẢN LÝ ĐẢNG VIÊN</h2>
+        <div class="logo-container">
+            <a href="/">
+                <img src="{{ url_for('static', filename='Logo.png') }}" alt="Logo" class="logo-img">
+            </a>
+            <h1>Hệ thống Quản lý Đảng viên AI</h1>
+        </div>
         {% if session.user %}
         <div>
-            <span>{{ session.user.name }}</span> | 
-            <a href="{{ url_for('logout') }}" style="color:white">Đăng xuất</a>
+            <span style="margin-right: 15px;">Đ/c: <strong>{{ session.user.name }}</strong></span>
+            <a href="{{ url_for('logout') }}" style="color: #ffeb3b; font-weight: bold; text-decoration: none;">Đăng xuất</a>
         </div>
         {% endif %}
     </header>
+
     <div class="container">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
