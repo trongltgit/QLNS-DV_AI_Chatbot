@@ -1,9 +1,44 @@
 {% extends "base.html" %}
+
 {% block content %}
-<h2>Đăng nhập hệ thống</h2>
-<form method="POST">
-    Tên đăng nhập:<br><input name="username" required><br><br>
-    Mật khẩu:<br><input name="password" type="password" required><br><br>
-    <button type="submit">Đăng nhập</button>
-</form>
+<div style="max-width: 400px; margin: 50px auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 12px; background: #ffffff; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+    <h2 style="text-align: center; color: #2e7d32; margin-bottom: 25px;">ĐĂNG NHẬP</h2>
+    
+    <form method="POST">
+        <div style="margin-bottom: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold;">Tên đăng nhập:</label>
+            <input name="username" required 
+                   style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box;"
+                   placeholder="Nhập tài khoản...">
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold;">Mật khẩu:</label>
+            <input name="password" type="password" required 
+                   style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box;"
+                   placeholder="Nhập mật khẩu...">
+        </div>
+        
+        <button type="submit" style="width: 100%; padding: 12px; background: linear-gradient(135deg,#2e7d32,#4caf50); color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.3s;">
+            XÁC NHẬN ĐĂNG NHẬP
+        </button>
+    </form>
+    
+    <div style="margin-top: 20px; text-align: center; font-size: 0.9em; color: #666;">
+        <p>Hệ thống quản lý nội bộ dành cho Đảng viên</p>
+    </div>
+</div>
+
+<style>
+    /* Hiệu ứng khi di chuột vào nút */
+    button:hover {
+        opacity: 0.9;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    /* Chỉnh lại link "Về trang chủ" ở base.html cho trang login vì không cần thiết */
+    .container > a {
+        display: none;
+    }
+</style>
 {% endblock %}
